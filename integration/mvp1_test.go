@@ -77,6 +77,14 @@ func TestEndToEndSignalingWebRTC(t *testing.T) {
 	}()
 
 	operatorMsgs := make(chan server.Message, 32)
+
+	// Join performs its own synchronous read of the `joined` response.
+	// Start the operator read loop only after Join returns: coder/websocket
+	// permits concurrent writes, but it does not permit two concurrent readers.
+	if err := operator.Join(ctx, code); err != nil {
+		t.Fatal(err)
+	}
+
 	go func() {
 		for {
 			msg, err := operator.Read(ctx)
@@ -86,10 +94,6 @@ func TestEndToEndSignalingWebRTC(t *testing.T) {
 			operatorMsgs <- msg
 		}
 	}()
-
-	if err := operator.Join(ctx, code); err != nil {
-		t.Fatal(err)
-	}
 
 	// The target's local user sees the operator join and explicitly approves.
 	waitMsg(t, targetMsgs, "peer_joined")
