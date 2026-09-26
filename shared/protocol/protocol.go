@@ -11,6 +11,7 @@ package protocol
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 )
 
 // Control message types (client <-> server, plaintext JSON).
@@ -116,4 +117,28 @@ func Decode(p []byte) (byte, []byte, error) {
 		return 0, nil, errors.New("protocol: empty message")
 	}
 	return p[0], p[1:], nil
+}
+
+// Validate rejects malformed or out-of-range input events before they reach
+// the input injector.
+func (e InputEvent) Validate() error {
+	switch e.T {
+	case "move", "down", "up", "wheel":
+		if e.X < 0 || e.X > 1 || e.Y < 0 || e.Y > 1 {
+			return fmt.Errorf("protocol: coordinates out of range")
+		}
+		if e.B < 0 || e.B > 2 {
+			return fmt.Errorf("protocol: invalid button %d", e.B)
+		}
+		if e.D < -1200 || e.D > 1200 {
+			return fmt.Errorf("protocol: invalid wheel delta %d", e.D)
+		}
+	case "keydown", "keyup":
+		if e.K < 1 || e.K > 254 {
+			return fmt.Errorf("protocol: invalid key code %d", e.K)
+		}
+	default:
+		return fmt.Errorf("protocol: unknown input type %q", e.T)
+	}
+	return nil
 }

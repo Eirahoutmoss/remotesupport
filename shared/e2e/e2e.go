@@ -50,6 +50,7 @@ type Channel struct {
 	wmu   sync.Mutex
 	sendN uint64
 	recvN uint64 // only touched by the single reader
+	dead  bool   // set after an authentication failure; channel is unusable
 
 	// SAS is a 6-digit verification code, identical on both ends only if no
 	// one intercepted the key exchange.
@@ -135,15 +136,23 @@ func (c *Channel) Send(ctx context.Context, p []byte) error {
 	return c.t.WriteMsg(ctx, ct)
 }
 
+// ErrAuth is returned when a message fails authentication (tampering,
+// replay, reordering or a key mismatch). The channel is unusable afterwards.
+var ErrAuth = errors.New("e2e: authentication failed")
+
 // Recv reads and decrypts one message. Must be called from one goroutine.
 func (c *Channel) Recv(ctx context.Context) ([]byte, error) {
+	if c.dead {
+		return nil, ErrAuth
+	}
 	ct, err := c.t.ReadMsg(ctx)
 	if err != nil {
 		return nil, err
 	}
 	p, err := c.recv.Open(nil, nonce(c.recvN), ct, nil)
 	if err != nil {
-		return nil, errors.New("e2e: authentication failed")
+		c.dead = true
+		return nil, ErrAuth
 	}
 	c.recvN++
 	return p, nil
