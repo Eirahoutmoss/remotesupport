@@ -1,4 +1,3 @@
-
 package screen
 
 import (
