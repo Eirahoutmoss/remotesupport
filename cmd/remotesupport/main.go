@@ -37,18 +37,18 @@ const (
 	idDisconnect = 1003
 	idStatus     = 1004
 
-	bsPushButton = 0x00000000
+	bsPushButton    = 0x00000000
 	bsDefPushButton = 0x00000001
 
-	esCenter    = 0x0001
-	esReadOnly  = 0x0800
+	esCenter      = 0x0001
+	esReadOnly    = 0x0800
 	esAutoHScroll = 0x0080
 
-	mbOk        = 0x00000000
-	mbIconInfo  = 0x00000040
-	mbIconWarn  = 0x00000030
+	mbOk       = 0x00000000
+	mbIconInfo = 0x00000040
+	mbIconWarn = 0x00000030
 
-	colorWindow = 5
+	colorWindow  = 5
 	colorBtnFace = 15
 
 	errorClassExists = 1410
@@ -115,12 +115,12 @@ var (
 )
 
 var (
-	hInstance uintptr
-	hwndStatus uintptr
-	hwndAccept uintptr
+	hInstance      uintptr
+	hwndStatus     uintptr
+	hwndAccept     uintptr
 	hwndDisconnect uintptr
 	connectionCode string
-	connected bool
+	connected      bool
 )
 
 func u16(s string) *uint16 {
