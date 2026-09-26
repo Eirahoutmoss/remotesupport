@@ -257,17 +257,19 @@ func (s *Server) handleApprove(conn *websocket.Conn, code string, ok bool, reaso
 		return
 	}
 	if sess.approved {
-		op := sess.operator.conn
+		target := sess.target.conn
 		s.mu.Unlock()
-		_ = s.write(op, Message{Type: "error", Reason: "approval_already_decided"})
+		_ = s.write(target, Message{Type: "error", Reason: "approval_already_decided"})
 		return
 	}
 	if !ok {
 		op := sess.operator.conn
+		target := sess.target.conn
 		delete(s.sessions, code)
 		s.mu.Unlock()
 		_ = s.write(op, Message{Type: "rejected", Reason: reason})
 		_ = op.Close(websocket.StatusPolicyViolation, "rejected")
+		_ = target.Close(websocket.StatusPolicyViolation, "rejected")
 		return
 	}
 	sess.approved = true
