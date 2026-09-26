@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eirahoutmoss/remotesupport/client/screen"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -16,17 +17,19 @@ type Signal struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-type SignalFunc func(context.Context, Signal) error
-
 type Peer struct {
 	pc        *webrtc.PeerConnection
 	mu        sync.Mutex
 	control   *webrtc.DataChannel
+	screen    *screen.Transport
 	sendSig   SignalFunc
 	pending   []webrtc.ICECandidateInit
 	onMessage func(string)
+	onScreen  screen.Handler
 	approved  bool
 }
+
+type SignalFunc func(context.Context, Signal) error
 
 func New(approved bool, send SignalFunc) (*Peer, error) {
 	return NewWithConfig(approved, webrtc.Configuration{}, send)
@@ -50,20 +53,33 @@ func NewWithConfig(approved bool, config webrtc.Configuration, send SignalFunc) 
 		_ = send(context.Background(), Signal{Kind: "candidate", Payload: b})
 	})
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != "ctl" {
+		switch dc.Label() {
+		case "ctl":
+			p.mu.Lock()
+			p.control = dc
+			h := p.onMessage
+			p.mu.Unlock()
+			if h != nil {
+				dc.OnMessage(func(m webrtc.DataChannelMessage) {
+					if m.IsString {
+						h(string(m.Data))
+					}
+				})
+			}
+		case "screen":
+			p.mu.Lock()
+			if p.screen != nil {
+				p.mu.Unlock()
+				_ = dc.Close()
+				return
+			}
+			t := screen.NewTransport(dc)
+			p.screen = t
+			h := p.onScreen
+			p.mu.Unlock()
+			t.SetHandler(h)
+		default:
 			_ = dc.Close()
-			return
-		}
-		p.mu.Lock()
-		p.control = dc
-		h := p.onMessage
-		p.mu.Unlock()
-		if h != nil {
-			dc.OnMessage(func(m webrtc.DataChannelMessage) {
-				if m.IsString {
-					h(string(m.Data))
-				}
-			})
 		}
 	})
 	return p, nil
@@ -96,6 +112,45 @@ func (p *Peer) CreateControl() error {
 		})
 	}
 	return nil
+}
+
+func (p *Peer) CreateScreen() error {
+	if !p.approved {
+		return errors.New("webrtc: local approval required")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.screen != nil {
+		return errors.New("webrtc: screen channel already exists")
+	}
+	dc, err := p.pc.CreateDataChannel("screen", nil)
+	if err != nil {
+		return err
+	}
+	t := screen.NewTransport(dc)
+	p.screen = t
+	t.SetHandler(p.onScreen)
+	return nil
+}
+
+func (p *Peer) SendScreenFrame(f screen.Frame) error {
+	p.mu.Lock()
+	t := p.screen
+	p.mu.Unlock()
+	if t == nil {
+		return errors.New("webrtc: screen channel not open")
+	}
+	return t.Send(f)
+}
+
+func (p *Peer) SetScreenHandler(fn screen.Handler) {
+	p.mu.Lock()
+	p.onScreen = fn
+	t := p.screen
+	p.mu.Unlock()
+	if t != nil {
+		t.SetHandler(fn)
+	}
 }
 
 func (p *Peer) Offer(ctx context.Context) (Signal, error) {
@@ -227,7 +282,16 @@ func (p *Peer) SetControlHandler(fn func(string)) {
 	}
 }
 
-func (p *Peer) Close() error { return p.pc.Close() }
+func (p *Peer) Close() error {
+	p.mu.Lock()
+	t := p.screen
+	p.screen = nil
+	p.mu.Unlock()
+	if t != nil {
+		t.Close()
+	}
+	return p.pc.Close()
+}
 
 func waitICE(ctx context.Context, pc *webrtc.PeerConnection) error {
 	if pc.ICEGatheringState() == webrtc.ICEGatheringStateComplete {
