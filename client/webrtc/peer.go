@@ -60,7 +60,7 @@ func NewWithConfig(approved bool, config webrtc.Configuration, send SignalFunc) 
 		p.mu.Unlock()
 		if h != nil {
 			dc.OnMessage(func(m webrtc.DataChannelMessage) {
-				if m.IsString {
+				if m.IsString() {
 					h(string(m.Data))
 				}
 			})
@@ -90,7 +90,7 @@ func (p *Peer) CreateControl() error {
 	if p.onMessage != nil {
 		h := p.onMessage
 		dc.OnMessage(func(m webrtc.DataChannelMessage) {
-			if m.IsString {
+			if m.IsString() {
 				h(string(m.Data))
 			}
 		})
@@ -220,7 +220,7 @@ func (p *Peer) SetControlHandler(fn func(string)) {
 	p.mu.Unlock()
 	if dc != nil && fn != nil {
 		dc.OnMessage(func(m webrtc.DataChannelMessage) {
-			if m.IsString {
+			if m.IsString() {
 				fn(string(m.Data))
 			}
 		})
