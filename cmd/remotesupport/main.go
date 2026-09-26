@@ -37,18 +37,18 @@ const (
 	idDisconnect = 1003
 	idStatus     = 1004
 
-	bsPushButton    = 0x00000000
+	bsPushButton = 0x00000000
 	bsDefPushButton = 0x00000001
 
-	esCenter      = 0x0001
-	esReadOnly    = 0x0800
+	esCenter    = 0x0001
+	esReadOnly  = 0x0800
 	esAutoHScroll = 0x0080
 
-	mbOk       = 0x00000000
-	mbIconInfo = 0x00000040
-	mbIconWarn = 0x00000030
+	mbOk        = 0x00000000
+	mbIconInfo  = 0x00000040
+	mbIconWarn  = 0x00000030
 
-	colorWindow  = 5
+	colorWindow = 5
 	colorBtnFace = 15
 
 	errorClassExists = 1410
@@ -115,12 +115,12 @@ var (
 )
 
 var (
-	hInstance      uintptr
-	hwndStatus     uintptr
-	hwndAccept     uintptr
+	hInstance uintptr
+	hwndStatus uintptr
+	hwndAccept uintptr
 	hwndDisconnect uintptr
 	connectionCode string
-	connected      bool
+	connected bool
 )
 
 func u16(s string) *uint16 {
@@ -160,7 +160,7 @@ func setStatus(text string) {
 }
 
 func copyCode(hwnd uintptr) {
-	if openClipboard.Call(hwnd) == 0 {
+	if r, _, _ := openClipboard.Call(hwnd); r == 0 {
 		messageBoxW.Call(hwnd, uintptr(unsafe.Pointer(u16("Panoya erişilemedi."))), uintptr(unsafe.Pointer(u16("Remote Support"))), mbIconWarn|mbOk)
 		return
 	}
@@ -182,7 +182,7 @@ func copyCode(hwnd uintptr) {
 	copy(dst, raw)
 	globalUnlock.Call(mem)
 
-	if setClipboardData.Call(cfUnicodeText, mem) == 0 {
+	if r, _, _ := setClipboardData.Call(cfUnicodeText, mem); r == 0 {
 		return
 	}
 	setStatus("● Kod panoya kopyalandı")
