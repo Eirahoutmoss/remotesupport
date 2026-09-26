@@ -241,8 +241,15 @@ func TestEndToEndSignalingWebRTC(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The signaling readers are intentionally driven by ctx. Once the close
+	// signal has been sent and both WebRTC peers are closed, cancel the test
+	// context so their read loops can terminate immediately instead of waiting
+	// for the 15-second test deadline.
 	targetPeer.Close()
 	opPeer.Close()
+	operator.Close(context.Background())
+	target.Close(context.Background())
+	cancel()
 	<-targetDone
 	<-opDone
 }
