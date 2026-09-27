@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"testing"
 	"time"
 
@@ -49,6 +50,23 @@ func writeMessage(t *testing.T, conn *websocket.Conn, msg Message) {
 	defer cancel()
 	if err := wsjson.Write(ctx, conn, msg); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCreatedCodeIsSixDigits(t *testing.T) {
+	s := NewServer()
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	target := dialServer(t, ts)
+	defer target.Close(websocket.StatusNormalClosure, "")
+	writeMessage(t, target, Message{Type: "create"})
+	created := readMessage(t, target)
+	if created.Type != "created" {
+		t.Fatalf("got %q", created.Type)
+	}
+	if !regexp.MustCompile(`^[0-9]{6}$`).MatchString(created.Code) {
+		t.Fatalf("code is not six digits: %q", created.Code)
 	}
 }
 

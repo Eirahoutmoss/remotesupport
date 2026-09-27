@@ -3,10 +3,10 @@ package signaling
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -24,7 +24,6 @@ const (
 	defaultCleanupTick = 1 * time.Second
 	defaultRateWindow  = 1 * time.Minute
 	defaultJoinFails   = 8
-	codeBytes          = 5 // 40 bits; displayed as 8 base32 chars.
 )
 
 type Role string
@@ -417,11 +416,11 @@ func remoteIP(addr string) string {
 }
 
 func newCode() string {
-	b := make([]byte, codeBytes)
-	if _, err := rand.Read(b); err != nil {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
 		panic(fmt.Sprintf("signaling: crypto/rand failed: %v", err))
 	}
-	return strings.TrimRight(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b), "=")
+	return fmt.Sprintf("%06d", n.Int64())
 }
 
 var ErrNotApproved = errors.New("signaling: session not approved")

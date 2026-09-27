@@ -18,15 +18,19 @@ type Signal struct {
 }
 
 type Peer struct {
-	pc        *webrtc.PeerConnection
-	mu        sync.Mutex
-	control   *webrtc.DataChannel
-	screen    *screen.Transport
-	sendSig   SignalFunc
-	pending   []webrtc.ICECandidateInit
-	onMessage func(string)
-	onScreen  screen.Handler
-	approved  bool
+	pc          *webrtc.PeerConnection
+	mu          sync.Mutex
+	control     *webrtc.DataChannel
+	file        *webrtc.DataChannel
+	screen      *screen.Transport
+	sendSig     SignalFunc
+	pending     []webrtc.ICECandidateInit
+	onMessage   func(string)
+	onFile      func([]byte)
+	onScreen    screen.Handler
+	screenReady chan struct{}
+	screenOnce  sync.Once
+	approved    bool
 }
 
 type SignalFunc func(context.Context, Signal) error
@@ -40,7 +44,7 @@ func NewWithConfig(approved bool, config webrtc.Configuration, send SignalFunc) 
 	if err != nil {
 		return nil, err
 	}
-	p := &Peer{pc: pc, sendSig: send, approved: approved}
+	p := &Peer{pc: pc, sendSig: send, approved: approved, screenReady: make(chan struct{})}
 
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil || send == nil {
@@ -66,6 +70,14 @@ func NewWithConfig(approved bool, config webrtc.Configuration, send SignalFunc) 
 					}
 				})
 			}
+		case "file":
+			p.mu.Lock()
+			p.file = dc
+			h := p.onFile
+			p.mu.Unlock()
+			if h != nil {
+				dc.OnMessage(func(m webrtc.DataChannelMessage) { h(m.Data) })
+			}
 		case "screen":
 			p.mu.Lock()
 			if p.screen != nil {
@@ -78,6 +90,7 @@ func NewWithConfig(approved bool, config webrtc.Configuration, send SignalFunc) 
 			h := p.onScreen
 			p.mu.Unlock()
 			t.SetHandler(h)
+			p.screenOnce.Do(func() { close(p.screenReady) })
 		default:
 			_ = dc.Close()
 		}
@@ -114,6 +127,57 @@ func (p *Peer) CreateControl() error {
 	return nil
 }
 
+func (p *Peer) CreateFile() error {
+	if !p.approved {
+		return errors.New("webrtc: local approval required")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.file != nil {
+		return errors.New("webrtc: file channel already exists")
+	}
+	dc, err := p.pc.CreateDataChannel("file", nil)
+	if err != nil {
+		return err
+	}
+	p.file = dc
+	if p.onFile != nil {
+		h := p.onFile
+		dc.OnMessage(func(m webrtc.DataChannelMessage) { h(m.Data) })
+	}
+	return nil
+}
+
+func (p *Peer) SetFileHandler(fn func([]byte)) {
+	p.mu.Lock()
+	p.onFile = fn
+	dc := p.file
+	p.mu.Unlock()
+	if dc != nil && fn != nil {
+		dc.OnMessage(func(m webrtc.DataChannelMessage) { fn(m.Data) })
+	}
+}
+
+func (p *Peer) FileReady() bool {
+	p.mu.Lock()
+	dc := p.file
+	p.mu.Unlock()
+	return dc != nil && dc.ReadyState() == webrtc.DataChannelStateOpen
+}
+
+func (p *Peer) SendFileData(data []byte) error {
+	p.mu.Lock()
+	dc := p.file
+	p.mu.Unlock()
+	if dc == nil {
+		return errors.New("webrtc: file channel not open")
+	}
+	if dc.ReadyState() != webrtc.DataChannelStateOpen {
+		return errors.New("webrtc: file channel is not ready")
+	}
+	return dc.Send(data)
+}
+
 func (p *Peer) CreateScreen() error {
 	if !p.approved {
 		return errors.New("webrtc: local approval required")
@@ -130,7 +194,26 @@ func (p *Peer) CreateScreen() error {
 	t := screen.NewTransport(dc)
 	p.screen = t
 	t.SetHandler(p.onScreen)
+	p.screenOnce.Do(func() { close(p.screenReady) })
 	return nil
+}
+
+// WaitScreen blocks until the screen transport exists on this peer.
+// The offerer creates the data channel; the answerer receives it via OnDataChannel.
+func (p *Peer) WaitScreen(ctx context.Context) error {
+	p.mu.Lock()
+	ready := p.screenReady
+	readyNow := p.screen != nil
+	p.mu.Unlock()
+	if readyNow {
+		return nil
+	}
+	select {
+	case <-ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (p *Peer) SendScreenFrame(f screen.Frame) error {
