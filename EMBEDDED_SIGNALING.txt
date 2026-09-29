@@ -1,0 +1,1 @@
+RemoteSupport now embeds the LAN signaling server.\n\nRun only RemoteSupport.exe. The first instance that binds TCP 8091 becomes the LAN signaling host. Other instances discover it automatically over UDP 8090.\n\nNo separate RemoteSupport-Signaling.exe is required for normal LAN use.\n

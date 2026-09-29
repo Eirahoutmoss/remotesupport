@@ -10,7 +10,7 @@ const (
 	magic          = "RSF1"
 	version        = 1
 	headerSize     = 27
-	MaxPayloadSize = 2 << 20 // 2 MiB
+	MaxPayloadSize = 6 << 20 // 6 MiB
 	MaxWidth       = 16384
 	MaxHeight      = 16384
 )

@@ -231,42 +231,20 @@ var (
 	uiPanelBrush   uintptr
 	uiEditBrush    uintptr
 	uiHeaderFont   uintptr
-	uiBrandFont    uintptr
-	uiTitleFont    uintptr
 	uiSubtitleFont uintptr
 	uiBodyFont     uintptr
 	uiButtonFont   uintptr
-	uiLabelFont    uintptr
-	uiSmallFont    uintptr
 	uiCodeFont     uintptr
 	uiEditFont     uintptr
-	uiIconFont     uintptr
 )
 
-// Palette. Values are written as intuitive 0xRRGGBB and converted to the
-// Win32 COLORREF byte order (0x00BBGGRR) by rgb() at every use site. Writing
-// them as RGB and passing them straight to GDI (as the first version did) makes
-// GDI read them as BGR, which turned the blue accent orange and the navy canvas
-// brown; rgb() is what actually gives the concept its blue/navy look.
 const (
-	uiBgColor     = 0x0A1220 // app canvas, deep navy (top of gradient)
-	uiBgColor2    = 0x0C1626 // app canvas, bottom of gradient
-	uiBarColor    = 0x0B1524 // top product bar + footer
-	uiNavColor    = 0x080F1C // left navigation rail (darkest surface)
-	uiPanelColor  = 0x131F30 // cards / panels
-	uiPanelHi     = 0x182842 // hovered / active panel
-	uiEditColor   = 0x0D1726 // input fields, code box
-	uiBorderColor = 0x21324B // hairline dividers / borders
-	uiTextColor   = 0xEDF2F8 // primary text
-	uiMutedColor  = 0x93A4BA // secondary text
-	uiFaintColor  = 0x5D6E85 // tertiary / placeholder text
-	uiAccentColor = 0x2E90FF // primary accent (blue)
-	uiAccentHi    = 0x57A9FF // accent highlight (gradient top / glow)
-	uiAccentDim   = 0x1E5FB0 // accent shadow (gradient bottom)
-	uiCyanColor   = 0x38BDF8 // secondary accent used sparingly on icons
-	uiSuccess     = 0x26D07C // "connected" / live status
-	uiDanger      = 0xEF4655 // disconnect / destructive
-	uiDangerHi    = 0xF56672 // disconnect highlight
+	uiBgColor     = 0x000B1422
+	uiPanelColor  = 0x00131F2E
+	uiEditColor   = 0x00101A28
+	uiTextColor   = 0x00F4F8FC
+	uiMutedColor  = 0x0099A9BA
+	uiAccentColor = 0x002E90FF
 )
 
 type appSettings struct {
@@ -453,64 +431,6 @@ func utf16ptr(s string) *uint16 {
 	return p
 }
 
-// rgb converts an intuitive 0xRRGGBB value to a Win32 COLORREF (0x00BBGGRR),
-// which is the byte order GDI's CreateSolidBrush / SetTextColor expect.
-func rgb(hex uint32) uintptr {
-	r := (hex >> 16) & 0xFF
-	g := (hex >> 8) & 0xFF
-	b := hex & 0xFF
-	return uintptr(b<<16 | g<<8 | r)
-}
-
-// mix blends two 0xRRGGBB colors by t in [0,1] and returns a COLORREF. Used for
-// cheap vertical gradients (bands) and glow falloff without alpha blending.
-func mix(a, b uint32, t float64) uintptr {
-	if t < 0 {
-		t = 0
-	}
-	if t > 1 {
-		t = 1
-	}
-	ar, ag, ab := (a>>16)&0xFF, (a>>8)&0xFF, a&0xFF
-	br, bg, bb := (b>>16)&0xFF, (b>>8)&0xFF, b&0xFF
-	r := uint32(float64(ar) + (float64(br)-float64(ar))*t)
-	g := uint32(float64(ag) + (float64(bg)-float64(ag))*t)
-	bl := uint32(float64(ab) + (float64(bb)-float64(ab))*t)
-	return uintptr(bl<<16 | g<<8 | r)
-}
-
-// fillBand paints a solid rectangle in a COLORREF (already byte-ordered).
-func fillBand(hdc uintptr, x, y, w, h int, color uintptr) {
-	if w <= 0 || h <= 0 {
-		return
-	}
-	rc := rect{Left: int32(x), Top: int32(y), Right: int32(x + w), Bottom: int32(y + h)}
-	brush, _, _ := createSolidBrush.Call(color)
-	if brush != 0 {
-		fillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
-		deleteObject.Call(brush)
-	}
-}
-
-// vGradient paints a vertical gradient from 0xRRGGBB top to bottom using n bands.
-func vGradient(hdc uintptr, x, y, w, h int, top, bottom uint32, n int) {
-	if h <= 0 || w <= 0 {
-		return
-	}
-	if n < 1 {
-		n = 1
-	}
-	step := float64(h) / float64(n)
-	for i := 0; i < n; i++ {
-		by := y + int(float64(i)*step)
-		bh := y + int(float64(i+1)*step) - by
-		if bh < 1 {
-			bh = 1
-		}
-		fillBand(hdc, x, by, w, bh, mix(top, bottom, float64(i)/float64(n-1+1)))
-	}
-}
-
 func makeUIFont(height int, weight int) uintptr {
 	face := utf16ptr("Segoe UI")
 	r, _, _ := createFont.Call(
@@ -521,20 +441,15 @@ func makeUIFont(height int, weight int) uintptr {
 }
 
 func initUITheme() {
-	uiBgBrush, _, _ = createSolidBrush.Call(rgb(uiBgColor))
-	uiPanelBrush, _, _ = createSolidBrush.Call(rgb(uiPanelColor))
-	uiEditBrush, _, _ = createSolidBrush.Call(rgb(uiEditColor))
-	uiHeaderFont = makeUIFont(27, 700)   // page titles ("Uzaktan Destek")
-	uiBrandFont = makeUIFont(20, 800)    // product wordmark
-	uiTitleFont = makeUIFont(18, 700)    // card titles
-	uiSubtitleFont = makeUIFont(15, 600) // section / row titles
-	uiBodyFont = makeUIFont(13, 400)     // body text
-	uiButtonFont = makeUIFont(13, 600)   // button labels
-	uiLabelFont = makeUIFont(11, 700)    // ALL-CAPS section labels
-	uiSmallFont = makeUIFont(11, 400)    // stats / captions
-	uiCodeFont = makeUIFont(36, 800)     // big connection code
-	uiEditFont = makeUIFont(22, 600)     // input fields
-	uiIconFont = makeUIFont(20, 400)     // glyph icons
+	uiBgBrush, _, _ = createSolidBrush.Call(uintptr(uiBgColor))
+	uiPanelBrush, _, _ = createSolidBrush.Call(uintptr(uiPanelColor))
+	uiEditBrush, _, _ = createSolidBrush.Call(uintptr(uiEditColor))
+	uiHeaderFont = makeUIFont(28, 700)
+	uiSubtitleFont = makeUIFont(15, 400)
+	uiBodyFont = makeUIFont(13, 400)
+	uiButtonFont = makeUIFont(13, 600)
+	uiCodeFont = makeUIFont(34, 700)
+	uiEditFont = makeUIFont(22, 500)
 }
 
 func setControlFont(hwnd, font uintptr) {
@@ -1818,12 +1733,9 @@ func layoutUI() {
 	hide(state.status)
 
 	if connected && !fullscreen.Load() {
-		// Toolbar action buttons sit on the painted toolbar surface (y≈104).
-		moveControl(state.fileSend, w-306, 104, 128, 40, true)
-		moveControl(state.fullscreenButton, w-170, 104, 146, 40, true)
-		// Prominent red disconnect in the header (ID_BACK stops the session).
-		setText(state.back, "Bağlantıyı Kes")
-		moveControl(state.back, w-190, 22, 166, 42, true)
+		moveControl(state.fileSend, w-310, 114, 118, 38, true)
+		moveControl(state.fullscreenButton, w-182, 114, 150, 38, true)
+		moveControl(state.back, 0, 0, 1, 1, false)
 		moveControl(state.action, 0, 0, 1, 1, false)
 		moveControl(state.copy, 0, 0, 1, 1, false)
 		moveControl(state.codeLabel, 0, 0, 1, 1, false)
@@ -1849,14 +1761,8 @@ func layoutUI() {
 	}
 
 	if mode == 0 {
-		// Two primary action cards, side by side, tracking the window width.
-		contentW := w - contentX - gutter
-		cardGap := 24
-		cardW := (contentW - cardGap) / 2
-		cardY := 176
-		cardH := 200
-		moveControl(state.homeGet, contentX, cardY, cardW, cardH, true)
-		moveControl(state.homeGive, contentX+cardW+cardGap, cardY, cardW, cardH, true)
+		moveControl(state.homeGet, 184, 326, 400, 154, true)
+		moveControl(state.homeGive, 600, 326, 400, 154, true)
 		moveControl(state.back, 184, 500, 150, 48, false)
 		moveControl(state.action, 350, 500, 250, 48, false)
 		moveControl(state.copy, 620, 500, 170, 48, false)
@@ -1866,48 +1772,29 @@ func layoutUI() {
 	}
 
 	if mode == 1 {
-		setText(state.back, "‹ Geri")
-		moveControl(state.codeLabel, 214, 344, 560, 86, true) // big code inside painted box
-		moveControl(state.copy, 784, 356, 158, 62, true)      // copy pill inside code card
+		moveControl(state.back, 178, 575, 130, 46, true)
+		moveControl(state.action, 322, 575, 240, 46, true)
+		moveControl(state.copy, 574, 575, 170, 46, true)
+		moveControl(state.codeLabel, 178, 335, 782, 110, true)
 		moveControl(state.remoteEdit, 178, 335, 782, 58, false)
-		moveControl(state.back, contentX, 566, 140, 46, true)
-		moveControl(state.action, contentX+156, 566, 260, 46, true)
 		return
 	}
 
 	if mode == 2 {
-		setText(state.back, "‹ Geri")
-		moveControl(state.remoteEdit, contentX, 356, 620, 62, true)
-		moveControl(state.action, contentX+636, 356, 146, 62, true) // Bağlan next to input
+		moveControl(state.back, 178, 475, 130, 46, true)
+		moveControl(state.action, 730, 475, 230, 46, true)
 		moveControl(state.copy, 0, 0, 1, 1, false)
 		moveControl(state.codeLabel, 0, 0, 1, 1, false)
-		moveControl(state.back, contentX, 470, 140, 46, true)
+		moveControl(state.remoteEdit, 178, 360, 782, 66, true)
 	}
 }
 
-// Text alignment flags for paintText (DrawTextW).
-const (
-	dtCenter     = 0x00000001
-	dtRight      = 0x00000002
-	dtVCenter    = 0x00000004
-	dtSingleLine = 0x00000020
-	dtWordBreak  = 0x00000010
-	dtEndEllip   = 0x00008000
-
-	txLeft   = 0x00000000
-	txMid    = dtCenter | dtVCenter | dtSingleLine // centered both axes (icons, pills)
-	txVLeft  = dtVCenter | dtSingleLine            // left, vertically centered
-	txVRight = dtRight | dtVCenter | dtSingleLine  // right, vertically centered
-	txEnd    = dtVCenter | dtSingleLine | dtEndEllip
-	txWrap   = dtWordBreak
-)
-
-func paintText(hdc uintptr, text string, x, y, w, h int, font uintptr, color uint32, flags uint32) {
+func paintText(hdc uintptr, text string, x, y, w, h int, font, color uintptr, flags uint32) {
 	if hdc == 0 || text == "" {
 		return
 	}
 	setBkMode.Call(hdc, 1)
-	setTextColor.Call(hdc, rgb(color))
+	setTextColor.Call(hdc, color)
 	old, _, _ := selectObject.Call(hdc, font)
 	r := rect{Left: int32(x), Top: int32(y), Right: int32(x + w), Bottom: int32(y + h)}
 	drawText.Call(hdc, uintptr(unsafe.Pointer(utf16ptr(text))), ^uintptr(0), uintptr(unsafe.Pointer(&r)), uintptr(flags))
@@ -1915,92 +1802,15 @@ func paintText(hdc uintptr, text string, x, y, w, h int, font uintptr, color uin
 }
 
 func paintRoundPanel(hdc uintptr, x, y, w, h int, color uint32, radius int) {
-	brush, _, _ := createSolidBrush.Call(rgb(color))
+	brush, _, _ := createSolidBrush.Call(uintptr(color))
 	if brush == 0 {
 		return
 	}
-	// Match pen to the fill so RoundRect's 1px outline doesn't leave a stray edge.
-	pen, _, _ := createPen.Call(0, 1, rgb(color))
-	oldBrush, _, _ := selectObject.Call(hdc, brush)
-	oldPen, _, _ := selectObject.Call(hdc, pen)
+	old, _, _ := selectObject.Call(hdc, brush)
 	roundRect.Call(hdc, uintptr(x), uintptr(y), uintptr(x+w), uintptr(y+h), uintptr(radius), uintptr(radius))
-	selectObject.Call(hdc, oldBrush)
-	selectObject.Call(hdc, oldPen)
+	selectObject.Call(hdc, old)
 	deleteObject.Call(brush)
-	if pen != 0 {
-		deleteObject.Call(pen)
-	}
 }
-
-// paintCard draws a filled rounded panel with a 1px border, the standard card
-// look used throughout the concept (soft surface + hairline edge).
-func paintCard(hdc uintptr, x, y, w, h int, fill, border uint32, radius int) {
-	brush, _, _ := createSolidBrush.Call(rgb(fill))
-	pen, _, _ := createPen.Call(0, 1, rgb(border))
-	oldBrush, _, _ := selectObject.Call(hdc, brush)
-	oldPen, _, _ := selectObject.Call(hdc, pen)
-	roundRect.Call(hdc, uintptr(x), uintptr(y), uintptr(x+w), uintptr(y+h), uintptr(radius), uintptr(radius))
-	selectObject.Call(hdc, oldBrush)
-	selectObject.Call(hdc, oldPen)
-	if brush != 0 {
-		deleteObject.Call(brush)
-	}
-	if pen != 0 {
-		deleteObject.Call(pen)
-	}
-}
-
-// paintDot draws a small filled circle (status indicators, timeline bullets).
-func paintDot(hdc uintptr, cx, cy, r int, color uint32) {
-	brush, _, _ := createSolidBrush.Call(rgb(color))
-	pen, _, _ := createPen.Call(0, 1, rgb(color))
-	ob, _, _ := selectObject.Call(hdc, brush)
-	op, _, _ := selectObject.Call(hdc, pen)
-	ellipse.Call(hdc, uintptr(cx-r), uintptr(cy-r), uintptr(cx+r), uintptr(cy+r))
-	selectObject.Call(hdc, ob)
-	selectObject.Call(hdc, op)
-	if brush != 0 {
-		deleteObject.Call(brush)
-	}
-	if pen != 0 {
-		deleteObject.Call(pen)
-	}
-}
-
-// paintGlow fakes a soft glow behind an accent tile by stacking a few
-// progressively larger, darker rounded rectangles (no alpha channel in GDI).
-func paintGlow(hdc uintptr, x, y, w, h int, color uint32, radius int) {
-	for i := 3; i >= 1; i-- {
-		g := i * 3
-		paintRoundPanel(hdc, x-g, y-g, w+2*g, h+2*g, uint32(mixHex(uiBgColor, color, 0.10*float64(4-i))), radius+g)
-	}
-}
-
-// mixHex is mix() but returns a 0xRRGGBB value (for callers that need a literal).
-func mixHex(a, b uint32, t float64) uint32 {
-	if t < 0 {
-		t = 0
-	}
-	if t > 1 {
-		t = 1
-	}
-	ar, ag, ab := (a>>16)&0xFF, (a>>8)&0xFF, a&0xFF
-	br, bg, bb := (b>>16)&0xFF, (b>>8)&0xFF, b&0xFF
-	r := uint32(float64(ar) + (float64(br)-float64(ar))*t)
-	g := uint32(float64(ag) + (float64(bg)-float64(ag))*t)
-	bl := uint32(float64(ab) + (float64(bb)-float64(ab))*t)
-	return r<<16 | g<<8 | bl
-}
-
-// Shared shell geometry. Child-control layout in layoutUI() and the viewer in
-// resizeViewer() are anchored to these same numbers, so keep them in sync.
-const (
-	navW     = 164
-	headerH  = 86
-	footerH  = 52
-	contentX = 184
-	gutter   = 24
-)
 
 func paintShell(hdc uintptr) {
 	var rc rect
@@ -2011,6 +1821,73 @@ func paintShell(hdc uintptr) {
 		return
 	}
 
+	// Base canvas
+	brush, _, _ := createSolidBrush.Call(uintptr(uiBgColor))
+	if brush != 0 {
+		fillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
+		deleteObject.Call(brush)
+	}
+
+	// Top product bar
+	paintRoundPanel(hdc, 0, 0, w, 86, 0x000F1A2A, 0)
+	paintRoundPanel(hdc, 22, 20, 46, 46, 0x002E90FF, 12)
+	paintText(hdc, "▣", 32, 27, 26, 28, uiButtonFont, uintptr(uiTextColor), 0x00000001|0x00000010)
+	paintText(hdc, "SECURE REMOTE DESKTOP", 82, 14, 430, 30, uiHeaderFont, uintptr(uiTextColor), 0)
+	paintText(hdc, "Güvenli  •  Hızlı  •  Kolay  •  Her Yerden Destek", 84, 48, 470, 22, uiBodyFont, uintptr(uiMutedColor), 0)
+
+	// Feature chips, deliberately restrained so the header reads like a product, not a demo.
+	features := []struct {
+		x          int
+		title, sub string
+	}{
+		{520, "Güvenli Bağlantı", "Uçtan uca şifreleme"},
+		{700, "Yüksek Performans", "Düşük gecikme"},
+		{875, "Çoklu Monitör", "Tüm ekranlara erişim"},
+		{1040, "Kolay Kullanım", "Tek uygulama"},
+	}
+	for i, f := range features {
+		if f.x+150 < w {
+			if i > 0 {
+				paintRoundPanel(hdc, f.x-16, 20, 1, 46, 0x00223449, 0)
+			}
+			paintRoundPanel(hdc, f.x, 18, 34, 34, 0x001A2B40, 9)
+			icon := []string{"✓", "ϟ", "▣", "⚙"}[i]
+			paintText(hdc, icon, f.x+8, 23, 18, 22, uiButtonFont, uintptr(uiAccentColor), 0x00000001|0x00000010)
+			paintText(hdc, f.title, f.x+44, 17, 125, 20, uiButtonFont, uintptr(uiTextColor), 0)
+			paintText(hdc, f.sub, f.x+44, 39, 125, 18, uiBodyFont, uintptr(uiMutedColor), 0)
+		}
+	}
+
+	// Left navigation
+	paintRoundPanel(hdc, 0, 86, 164, h-138, 0x000A131F, 0)
+	page := sidebarPage.Load()
+	items := []struct {
+		y           int
+		label, icon string
+		active      bool
+	}{
+		{102, "Ana Sayfa", "⌂", page == 0},
+		{158, "Bağlantılar", "↔", page == 1},
+		{214, "Ayarlar", "⚙", page == 2},
+		{270, "Hakkında", "ⓘ", page == 3},
+	}
+	for _, it := range items {
+		if it.active {
+			paintRoundPanel(hdc, 8, it.y, 148, 44, 0x00172B43, 9)
+			paintRoundPanel(hdc, 8, it.y, 3, 44, 0x002E90FF, 2)
+		}
+		paintText(hdc, it.icon, 24, it.y+9, 26, 25, uiSubtitleFont, uintptr(uiTextColor), 0x00000001|0x00000010)
+		col := uiMutedColor
+		if it.active {
+			col = uiTextColor
+		}
+		paintText(hdc, it.label, 60, it.y+11, 90, 22, uiBodyFont, uintptr(col), 0)
+	}
+
+	// Bottom navigation metadata
+	paintText(hdc, "REMOTE SUPPORT", 22, h-102, 120, 18, uiButtonFont, uintptr(uiMutedColor), 0)
+	paintText(hdc, "v1.0.0", 22, h-80, 100, 18, uiBodyFont, uintptr(uiMutedColor), 0)
+
 	state.mu.Lock()
 	mode := state.mode
 	status := state.statusText
@@ -2019,209 +1896,59 @@ func paintShell(hdc uintptr) {
 	connected := viewer.active
 	viewer.mu.RUnlock()
 
-	// ---- Canvas: subtle vertical navy gradient ----
-	vGradient(hdc, 0, 0, w, h, uiBgColor, uiBgColor2, 22)
-
-	paintTopBar(hdc, w, connected, status)
-	paintSidebar(hdc, h)
-
-	contentW := w - contentX - gutter
-
-	switch {
-	case connected:
-		paintConnectedChrome(hdc, w, h)
-	case mode == 0:
-		paintHome(hdc, w, h, contentW)
-	case mode == 1:
-		paintPageHeader(hdc, "Destek Al", "Bu kodu destek verecek kişiye iletin.")
-		paintText(hdc, "BAĞLANTI KODUNUZ", contentX, 300, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
-		paintCard(hdc, contentX, 322, 782, 128, uiEditColor, uiBorderColor, 16)
-		paintText(hdc, "Kod oluşturulduğunda burada görünür ve otomatik paylaşılır.", contentX, 470, 782, 20, uiBodyFont, uiFaintColor, txVLeft)
-	case mode == 2:
-		paintPageHeader(hdc, "Destek Ver", "Karşı bilgisayarda görünen 6 haneli kodu girin.")
-		paintText(hdc, "BAĞLANTI KODU", contentX, 326, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
-		paintText(hdc, "Kod yalnızca karşı tarafın onayıyla bağlantı kurar.", contentX, 436, 782, 20, uiBodyFont, uiFaintColor, txVLeft)
-	case mode == 10:
-		paintSettings(hdc, w)
-	case mode == 11:
-		paintAbout(hdc, w)
-	}
-
-	paintFooter(hdc, w, h, connected)
-}
-
-// paintTopBar draws the product header: logo, wordmark, and either the feature
-// chips (idle) or a live session pill (connected).
-func paintTopBar(hdc uintptr, w int, connected bool, status string) {
-	fillBand(hdc, 0, 0, w, headerH, rgb(uiBarColor))
-	fillBand(hdc, 0, headerH-1, w, 1, rgb(uiBorderColor))
-
-	// Logo tile with a soft glow.
-	paintGlow(hdc, 22, 19, 48, 48, uiAccentColor, 14)
-	paintRoundPanel(hdc, 22, 19, 48, 48, uiAccentColor, 14)
-	paintText(hdc, "▣", 22, 19, 48, 48, uiHeaderFont, uiTextColor, txMid)
-
-	paintText(hdc, "SECURE REMOTE DESKTOP", 84, 16, 430, 26, uiBrandFont, uiTextColor, txVLeft)
-	paintText(hdc, "Güvenli  •  Hızlı  •  Kolay  •  Her Yerden Destek", 85, 46, 470, 22, uiBodyFont, uiMutedColor, txVLeft)
-
 	if connected {
-		// Session identity + live indicator, right-aligned (leaves room for the
-		// red disconnect button that layoutUI places at the far right).
-		px := w - 470
-		if px > 540 {
-			paintCard(hdc, px, 22, 240, 42, uiPanelColor, uiBorderColor, 12)
-			paintDot(hdc, px+22, 43, 5, uiSuccess)
-			paintText(hdc, "Bağlı", px+38, 22, 80, 42, uiButtonFont, uiTextColor, txVLeft)
-			st := strings.TrimPrefix(status, "● ")
-			paintText(hdc, st, px+96, 22, 132, 42, uiSmallFont, uiMutedColor, txEnd)
-		}
-		return
+		paintRoundPanel(hdc, 184, 106, w-204, 56, 0x00121F30, 12)
+		paintText(hdc, "UZAK MASAÜSTÜ", 204, 119, 190, 22, uiButtonFont, uintptr(uiTextColor), 0)
+		paintRoundPanel(hdc, 392, 124, 9, 9, 0x002BE66A, 5)
+		paintText(hdc, status, 412, 118, w-660, 22, uiBodyFont, uintptr(uiMutedColor), 0)
+	} else if mode == 0 {
+		paintText(hdc, "Uzaktan Destek", 184, 112, 520, 38, uiHeaderFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "Bilgisayarınızı güvenli bir bağlantıyla yönetin veya destek alın.", 186, 151, 700, 24, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintText(hdc, "HIZLI BAŞLANGIÇ", 184, 201, 240, 20, uiButtonFont, uintptr(uiMutedColor), 0)
+		paintRoundPanel(hdc, 184, 232, w-204, 74, 0x00121F30, 12)
+		paintText(hdc, "Güvenli bağlantı", 206, 247, 220, 22, uiSubtitleFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "Uçtan uca şifreleme   •   Çoklu monitör   •   Dosya aktarımı   •   Düşük gecikme", 206, 274, w-250, 20, uiBodyFont, uintptr(uiMutedColor), 0)
+	} else if mode == 1 {
+		paintText(hdc, "Destek Al", 184, 112, 400, 38, uiHeaderFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "Bu kodu destek verecek kişiye iletin.", 186, 151, 520, 24, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintText(hdc, "BAĞLANTI KODUNUZ", 184, 303, 300, 20, uiButtonFont, uintptr(uiMutedColor), 0)
+	} else if mode == 2 {
+		paintText(hdc, "Destek Ver", 184, 112, 400, 38, uiHeaderFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "Karşı bilgisayarda görünen 6 haneli kodu girin.", 186, 151, 620, 24, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintText(hdc, "BAĞLANTI KODU", 184, 326, 300, 20, uiButtonFont, uintptr(uiMutedColor), 0)
+	} else if mode == 10 {
+		paintText(hdc, "Ayarlar", 184, 112, 400, 38, uiHeaderFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "Bağlantı, görüntü ve çalışma tercihleri.", 186, 151, 620, 24, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintRoundPanel(hdc, 184, 198, w-204, 104, 0x00121F30, 14)
+		paintText(hdc, "BAĞLANTI", 208, 214, 200, 20, uiButtonFont, uintptr(uiAccentColor), 0)
+		paintText(hdc, "İnternet Signaling", 208, 240, 240, 22, uiSubtitleFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "WSS / WS adresi. Boş bırakılırsa LAN keşfi kullanılır.", 208, 267, 400, 20, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintRoundPanel(hdc, 184, 318, w-204, 104, 0x00121F30, 14)
+		paintText(hdc, "GÖRÜNTÜ", 208, 334, 200, 20, uiButtonFont, uintptr(uiAccentColor), 0)
+		paintText(hdc, "Kalite", 520, 360, 120, 18, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintText(hdc, "Maksimum yükseklik", 760, 360, 170, 18, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintRoundPanel(hdc, 184, 438, w-204, 74, 0x00121F30, 12)
+		paintText(hdc, "Ayarlar uygulama yeniden başlatıldığında korunur.", 208, 463, w-250, 22, uiBodyFont, uintptr(uiMutedColor), 0)
+	} else if mode == 11 {
+		paintText(hdc, "Hakkında", 184, 112, 400, 38, uiHeaderFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "Remote Support hakkında.", 186, 151, 620, 24, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintRoundPanel(hdc, 184, 198, w-204, 310, 0x00121F30, 16)
+		paintRoundPanel(hdc, 214, 230, 72, 72, 0x002E90FF, 16)
+		paintText(hdc, "▣", 230, 246, 40, 40, uiHeaderFont, uintptr(uiTextColor), 0x00000001|0x00000010)
+		paintText(hdc, "Remote Support", 310, 228, 420, 34, uiSubtitleFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "Güvenli uzaktan masaüstü ve destek uygulaması.", 310, 267, 500, 24, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintText(hdc, "PROGRAM YAZARI", 214, 338, 220, 20, uiButtonFont, uintptr(uiAccentColor), 0)
+		paintText(hdc, "Hasan Güler", 214, 365, 300, 30, uiSubtitleFont, uintptr(uiTextColor), 0)
+		paintText(hdc, "Sürüm 1.0.0   •   © 2026", 214, 418, 420, 22, uiBodyFont, uintptr(uiMutedColor), 0)
+		paintText(hdc, "Uçtan uca şifreleme   •   Çoklu monitör   •   Ekran aktarımı   •   Dosya aktarımı", 214, 456, w-250, 22, uiBodyFont, uintptr(uiMutedColor), 0)
 	}
 
-	// Feature chips, right-anchored so they track the window width.
-	chips := []struct{ icon, title, sub string }{
-		{"✓", "Güvenli Bağlantı", "Uçtan uca şifreleme"},
-		{"ϟ", "Yüksek Performans", "Düşük gecikme"},
-		{"▣", "Çoklu Monitör", "Tüm ekranlara erişim"},
-		{"⚙", "Kolay Kullanım", "Herkes için tasarlandı"},
-	}
-	chipW := 172
-	groupW := chipW * len(chips)
-	gx := w - gutter - groupW
-	if gx < 560 {
-		return // small window: keep the header uncluttered
-	}
-	for i, c := range chips {
-		x := gx + i*chipW
-		if i > 0 {
-			fillBand(hdc, x-6, 24, 1, 38, rgb(uiBorderColor))
-		}
-		paintRoundPanel(hdc, x, 24, 36, 36, uiPanelHi, 10)
-		paintText(hdc, c.icon, x, 24, 36, 36, uiIconFont, uiCyanColor, txMid)
-		paintText(hdc, c.title, x+46, 23, chipW-58, 18, uiButtonFont, uiTextColor, txEnd)
-		paintText(hdc, c.sub, x+46, 42, chipW-58, 16, uiSmallFont, uiMutedColor, txEnd)
-	}
-}
-
-// paintSidebar draws the left navigation rail with the active-page indicator.
-func paintSidebar(hdc uintptr, h int) {
-	navTop := headerH
-	navH := h - headerH - footerH
-	fillBand(hdc, 0, navTop, navW, navH, rgb(uiNavColor))
-	fillBand(hdc, navW-1, navTop, 1, navH, rgb(uiBorderColor))
-
-	page := sidebarPage.Load()
-	items := []struct {
-		label, icon string
-		page        int32
-	}{
-		{"Ana Sayfa", "⌂", 0},
-		{"Bağlantılar", "↔", 1},
-		{"Ayarlar", "⚙", 2},
-		{"Hakkında", "ⓘ", 3},
-	}
-	iy := navTop + 16
-	for _, it := range items {
-		active := page == it.page
-		var col, icol uint32 = uiMutedColor, uiFaintColor
-		if active {
-			paintRoundPanel(hdc, 10, iy, navW-20, 44, uiPanelHi, 10)
-			fillBand(hdc, 12, iy+9, 3, 26, rgb(uiAccentColor))
-			col = uiTextColor
-			icol = uiAccentColor
-		}
-		paintText(hdc, it.icon, 24, iy, 28, 44, uiIconFont, icol, txMid)
-		paintText(hdc, it.label, 58, iy, navW-66, 44, uiBodyFont, col, txVLeft)
-		iy += 52
-	}
-
-	paintText(hdc, "REMOTE SUPPORT", 22, h-footerH-44, navW-30, 16, uiLabelFont, uiFaintColor, txVLeft)
-	paintText(hdc, "Sürüm 1.0.0", 22, h-footerH-26, navW-30, 16, uiSmallFont, uiFaintColor, txVLeft)
-}
-
-func paintPageHeader(hdc uintptr, title, subtitle string) {
-	paintText(hdc, title, contentX, 104, 640, 34, uiHeaderFont, uiTextColor, txVLeft)
-	paintText(hdc, subtitle, contentX+2, 146, 720, 22, uiBodyFont, uiMutedColor, txVLeft)
-}
-
-// paintHome draws the two primary action cards (backgrounds are the owner-drawn
-// homeGet/homeGive buttons) and a "Son Bağlantılar" panel below them.
-func paintHome(hdc uintptr, w, h, contentW int) {
-	paintPageHeader(hdc, "Uzaktan Destek", "Bilgisayarınızı güvenli bir bağlantıyla yönetin veya destek alın.")
-
-	// "Son Bağlantılar" panel (empty state — no history is stored yet).
-	recentY := 400
-	recentH := h - footerH - recentY - 16
-	if recentH > 90 {
-		paintCard(hdc, contentX, recentY, contentW, recentH, uiPanelColor, uiBorderColor, 14)
-		paintText(hdc, "SON BAĞLANTILAR", contentX+22, recentY+18, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
-		fillBand(hdc, contentX+22, recentY+44, contentW-44, 1, rgb(uiBorderColor))
-		paintText(hdc, "Henüz bağlantı geçmişi yok.", contentX+22, recentY+58, contentW-44, 22, uiSubtitleFont, uiFaintColor, txVLeft)
-		paintText(hdc, "Kurduğunuz oturumlar burada listelenecek.", contentX+22, recentY+84, contentW-44, 20, uiBodyFont, uiFaintColor, txVLeft)
-	}
-}
-
-// paintConnectedChrome draws the remote-desktop workspace frame: a toolbar
-// surface behind the screen/quality controls and a stats strip under the viewer.
-func paintConnectedChrome(hdc uintptr, w, h int) {
-	// Toolbar surface behind the monitor/resolution/action buttons.
-	paintCard(hdc, contentX, 98, w-contentX-gutter, 58, uiPanelColor, uiBorderColor, 12)
-	paintText(hdc, "UZAK MASAÜSTÜ", contentX, 60, 200, 18, uiLabelFont, uiFaintColor, txVLeft)
-
-	// Stats strip along the bottom of the viewer area (viewer sits at y=145,
-	// height h-210 → its bottom is h-65; the footer starts at h-52).
-	stripY := h - footerH - 13
-	res := map[int32]string{0: "Otomatik", 1080: "1080p", 720: "720p", 480: "480p"}[captureMaxHeight.Load()]
-	if res == "" {
-		res = "Otomatik"
-	}
-	stats := "Çözünürlük: " + res + "     •     Kodek: H.264     •     Uçtan uca şifreli"
-	paintText(hdc, stats, contentX+8, stripY, w-contentX-gutter-8, 12, uiSmallFont, uiFaintColor, txVLeft)
-}
-
-func paintSettings(hdc uintptr, w int) {
-	paintPageHeader(hdc, "Ayarlar", "Bağlantı, görüntü ve çalışma tercihleri.")
-	cw := w - contentX - gutter
-	paintCard(hdc, contentX, 190, cw, 108, uiPanelColor, uiBorderColor, 14)
-	paintText(hdc, "BAĞLANTI", contentX+24, 206, 200, 18, uiLabelFont, uiAccentColor, txVLeft)
-	paintText(hdc, "İnternet Signaling", contentX+24, 232, 260, 22, uiSubtitleFont, uiTextColor, txVLeft)
-	paintText(hdc, "WSS / WS adresi. Boş bırakılırsa LAN keşfi kullanılır.", contentX+24, 262, 320, 20, uiBodyFont, uiMutedColor, txVLeft)
-	paintCard(hdc, contentX, 314, cw, 112, uiPanelColor, uiBorderColor, 14)
-	paintText(hdc, "GÖRÜNTÜ", contentX+24, 330, 200, 18, uiLabelFont, uiAccentColor, txVLeft)
-	paintText(hdc, "Aktarım kalitesi ve en yüksek çözünürlük.", contentX+24, 356, 300, 20, uiBodyFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Kalite", 520, 356, 120, 18, uiSmallFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Maksimum yükseklik", 760, 356, 180, 18, uiSmallFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Ayarlar uygulama yeniden başlatıldığında korunur.", contentX, 466, cw, 20, uiBodyFont, uiFaintColor, txVLeft)
-}
-
-func paintAbout(hdc uintptr, w int) {
-	paintPageHeader(hdc, "Hakkında", "Remote Support hakkında bilgi.")
-	cw := w - contentX - gutter
-	paintCard(hdc, contentX, 190, cw, 316, uiPanelColor, uiBorderColor, 16)
-	paintGlow(hdc, contentX+30, 222, 72, 72, uiAccentColor, 18)
-	paintRoundPanel(hdc, contentX+30, 222, 72, 72, uiAccentColor, 18)
-	paintText(hdc, "▣", contentX+30, 222, 72, 72, uiHeaderFont, uiTextColor, txMid)
-	paintText(hdc, "Remote Support", contentX+126, 224, 460, 32, uiHeaderFont, uiTextColor, txVLeft)
-	paintText(hdc, "Güvenli uzaktan masaüstü ve destek uygulaması.", contentX+126, 262, 520, 24, uiBodyFont, uiMutedColor, txVLeft)
-	fillBand(hdc, contentX+30, 318, cw-60, 1, rgb(uiBorderColor))
-	paintText(hdc, "PROGRAM YAZARI", contentX+30, 336, 240, 18, uiLabelFont, uiAccentColor, txVLeft)
-	paintText(hdc, "Hasan Güler", contentX+30, 360, 320, 30, uiSubtitleFont, uiTextColor, txVLeft)
-	paintText(hdc, "Sürüm 1.0.0     •     © 2026", contentX+30, 414, 420, 22, uiBodyFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Uçtan uca şifreleme  •  Çoklu monitör  •  Ekran aktarımı  •  Dosya aktarımı", contentX+30, 452, cw-60, 22, uiBodyFont, uiMutedColor, txVLeft)
-}
-
-func paintFooter(hdc uintptr, w, h int, connected bool) {
-	footerY := h - footerH
-	fillBand(hdc, 0, footerY, w, footerH, rgb(uiBarColor))
-	fillBand(hdc, 0, footerY, w, 1, rgb(uiBorderColor))
-	var dotCol uint32 = uiFaintColor
-	if connected {
-		dotCol = uiSuccess
-	}
-	paintDot(hdc, 30, footerY+footerH/2, 5, dotCol)
-	label := "Bağlantı Durumu: " + map[bool]string{true: "Aktif", false: "Hazır"}[connected]
-	paintText(hdc, label, 44, footerY, 260, footerH, uiBodyFont, uiTextColor, txVLeft)
-	paintText(hdc, "Program Yazarı: Hasan Güler  •  © 2026", w-320, footerY, 296, footerH, uiBodyFont, uiMutedColor, txVRight)
+	// Footer
+	footerY := h - 52
+	paintRoundPanel(hdc, 0, footerY, w, 52, 0x000A131F, 0)
+	paintRoundPanel(hdc, 24, footerY+20, 9, 9, 0x002BE66A, 5)
+	paintText(hdc, "Bağlantı Durumu: "+map[bool]string{true: "Aktif", false: "Hazır"}[connected], 42, footerY+15, 190, 22, uiBodyFont, uintptr(uiTextColor), 0)
+	paintText(hdc, "Program Yazarı: Hasan Güler", w-250, footerY+15, 225, 22, uiBodyFont, uintptr(uiMutedColor), 0)
 }
 
 func createControl(parent uintptr, class, text string, style uint32, x, y, w, h, id int) uintptr {
@@ -2982,99 +2709,70 @@ func drawOwnerButton(dis *drawItemStruct) {
 	if dis == nil || dis.HDC == 0 {
 		return
 	}
-	hdc := dis.HDC
 	r := dis.RcItem
 	id := int(dis.CtlID)
-	x, y := int(r.Left), int(r.Top)
-	bw, bh := int(r.Right-r.Left), int(r.Bottom-r.Top)
-	pressed := dis.ItemState&0x0001 != 0 // ODS_SELECTED
-	viewer.mu.RLock()
-	connected := viewer.active
-	viewer.mu.RUnlock()
+	bg := uint32(0x00152130)
+	fg := uint32(uiTextColor)
+	if id == ID_GET_SUPPORT {
+		bg = 0x00172F4E
+	}
+	if id == ID_GIVE_SUPPORT {
+		bg = 0x00141F2D
+	}
+	if id == ID_CONNECT {
+		bg = 0x002E90FF
+	}
+	if id == ID_COPY_CODE {
+		bg = 0x001B314A
+	}
+	if id == ID_BACK {
+		bg = 0x00152130
+	}
+	if id == ID_FILE_SEND || id == ID_FULLSCREEN {
+		bg = 0x00152130
+	}
+	if id >= ID_RES_ORIGINAL && id <= ID_RES_480P {
+		bg = 0x00152130
+	}
+	if id >= ID_MONITOR_BASE && id < ID_RES_ORIGINAL {
+		bg = 0x00152130
+	}
+	if dis.ItemState&0x0001 != 0 {
+		bg = 0x00233D5A
+	}
 
-	// ---- Primary action cards (Destek Al / Destek Ver) ----
+	brush, _, _ := createSolidBrush.Call(uintptr(bg))
+	if brush != 0 {
+		old, _, _ := selectObject.Call(dis.HDC, brush)
+		roundRect.Call(dis.HDC, uintptr(r.Left), uintptr(r.Top), uintptr(r.Right), uintptr(r.Bottom), 14, 14)
+		selectObject.Call(dis.HDC, old)
+		deleteObject.Call(brush)
+	}
+
 	if id == ID_GET_SUPPORT || id == ID_GIVE_SUPPORT {
-		var fill, border uint32 = uiPanelColor, uiBorderColor
-		if pressed {
-			fill = uiPanelHi
-			border = uiAccentColor
-		}
-		paintCard(hdc, x, y, bw, bh, fill, border, 16)
-
+		paintRoundPanel(dis.HDC, int(r.Left)+20, int(r.Top)+24, 54, 54, 0x002E90FF, 27)
 		icon := "▣"
-		title := "DESTEK VER"
-		desc := "Karşı bilgisayara güvenli şekilde bağlanın."
-		cta := "Bağlan  →"
 		if id == ID_GET_SUPPORT {
 			icon = "♙"
-			title = "DESTEK AL"
-			desc = "Bilgisayarınıza uzaktan bağlanılmasına izin verin."
-			cta = "Kod Oluştur  →"
 		}
-		// Accent icon medallion with glow.
-		paintGlow(hdc, x+24, y+24, 56, 56, uiAccentColor, 16)
-		paintRoundPanel(hdc, x+24, y+24, 56, 56, uiAccentColor, 16)
-		paintText(hdc, icon, x+24, y+24, 56, 56, uiHeaderFont, uiTextColor, txMid)
-
-		paintText(hdc, title, x+96, y+28, bw-116, 26, uiTitleFont, uiTextColor, txVLeft)
-		paintText(hdc, desc, x+96, y+58, bw-116, 44, uiBodyFont, uiMutedColor, txWrap)
-
-		// CTA chip pinned to the bottom-left of the card.
-		var chipCol uint32 = uiAccentColor
-		if pressed {
-			chipCol = uiAccentHi
+		paintText(dis.HDC, icon, int(r.Left)+35, int(r.Top)+35, 25, 28, uiSubtitleFont, uintptr(uiTextColor), 0x00000001|0x00000010)
+		title := "DESTEK AL"
+		desc := "Bilgisayarınıza uzaktan destek verilmesine izin verin."
+		if id == ID_GIVE_SUPPORT {
+			title = "DESTEK VER"
+			desc = "Karşı bilgisayara güvenli şekilde bağlanın."
 		}
-		paintText(hdc, cta, x+26, y+bh-40, bw-52, 22, uiButtonFont, chipCol, txVLeft)
+		paintText(dis.HDC, title, int(r.Left)+92, int(r.Top)+28, int(r.Right-r.Left)-112, 30, uiSubtitleFont, uintptr(uiTextColor), 0)
+		paintText(dis.HDC, desc, int(r.Left)+92, int(r.Top)+67, int(r.Right-r.Left)-112, 42, uiBodyFont, uintptr(uiMutedColor), 0)
 		return
 	}
-
-	// ---- Regular buttons: pill styling by role ----
 	text := buttonLabel(dis.HwndItem)
 	font := uiButtonFont
-	var fg uint32 = uiTextColor
-	radius := 12
-
-	var fill, border uint32
-	switch {
-	case id == ID_CONNECT:
-		// Primary filled accent pill (faux gradient: accent body + lighter cap).
-		fill, border = uiAccentColor, uiAccentColor
-		if pressed {
-			fill, border = uiAccentDim, uiAccentDim
-		}
-		fg = 0xFFFFFF
+	if id == ID_CONNECT {
 		font = uiSubtitleFont
-		paintCard(hdc, x, y, bw, bh, fill, border, radius)
-		if !pressed && bh > 10 {
-			paintRoundPanel(hdc, x+2, y+2, bw-4, bh/2, mixHex(uiAccentColor, uiAccentHi, 0.5), radius)
-		}
-		paintText(hdc, text, x+10, y, bw-20, bh, font, fg, txMid|txEnd)
-		return
-	case id == ID_BACK && connected:
-		// Destructive: disconnect.
-		fill, border, fg = uiDanger, uiDanger, 0xFFFFFF
-		if pressed {
-			fill, border = mixHex(uiDanger, 0x000000, 0.15), uiDanger
-		}
-		font = uiButtonFont
-	case id == ID_COPY_CODE:
-		fill, border = uiPanelHi, uiBorderColor
-		fg = uiAccentColor
-		if pressed {
-			fill = uiPanelColor
-		}
-	default:
-		// Back (idle), file send, fullscreen, monitor & resolution pills.
-		fill, border = uiPanelHi, uiBorderColor
-		fg = uiTextColor
-		if pressed {
-			fill, border = uiAccentColor, uiAccentColor
-			fg = 0xFFFFFF
-		}
+		fg = 0x00FFFFFF
 	}
-
-	paintCard(hdc, x, y, bw, bh, fill, border, radius)
-	paintText(hdc, text, x+10, y, bw-20, bh, font, fg, txMid|txEnd)
+	paintText(dis.HDC, text, int(r.Left)+10, int(r.Top)+8, int(r.Right-r.Left)-20, int(r.Bottom-r.Top)-16, font, uintptr(fg), 0x00000001|0x00000010|0x00000800)
 }
 
 func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
@@ -3087,19 +2785,17 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case 0x0138: // WM_CTLCOLORSTATIC
 		hdc := wParam
-		// The only prominent static is the connection-code label; give it the
-		// input-field surface so it reads as the code box painted behind it.
-		setTextColor.Call(hdc, rgb(uiTextColor))
+		setTextColor.Call(hdc, uintptr(uiTextColor))
 		setBkMode.Call(hdc, 1) // TRANSPARENT
-		return uiEditBrush
+		return uiBgBrush
 	case 0x0133: // WM_CTLCOLOREDIT
 		hdc := wParam
-		setTextColor.Call(hdc, rgb(uiTextColor)) // was near-black on a dark field: invisible
-		setBkMode.Call(hdc, 2)                   // OPAQUE
+		setTextColor.Call(hdc, uintptr(0x00151A24))
+		setBkMode.Call(hdc, 2) // OPAQUE
 		return uiEditBrush
 	case 0x0135: // WM_CTLCOLORBTN
 		hdc := wParam
-		setTextColor.Call(hdc, rgb(uiTextColor))
+		setTextColor.Call(hdc, uintptr(uiTextColor))
 		setBkMode.Call(hdc, 1)
 		return uiPanelBrush
 	case 0x002B: // WM_DRAWITEM
@@ -3112,21 +2808,20 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 	case 0x0202: // WM_LBUTTONUP
 		x := int(int16(lParam & 0xffff))
 		y := int(int16((lParam >> 16) & 0xffff))
-		// Left navigation rows: painted at y = 102 + 52*i, height 44 (see paintSidebar).
-		if x >= 0 && x < navW && y >= 96 {
+		if x >= 0 && x < 150 && y >= 86 {
 			switch {
-			case y >= 96 && y < 148:
+			case y >= 86 && y < 150:
 				sidebarPage.Store(0)
 				home()
 				return 0
-			case y >= 148 && y < 200:
+			case y >= 150 && y < 204:
 				sidebarPage.Store(1)
 				return 0
-			case y >= 200 && y < 252:
+			case y >= 204 && y < 258:
 				sidebarPage.Store(2)
 				showSettings()
 				return 0
-			case y >= 252 && y < 304:
+			case y >= 258 && y < 322:
 				sidebarPage.Store(3)
 				showAbout()
 				return 0
