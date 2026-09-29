@@ -73,49 +73,33 @@ var (
 
 var captureMu sync.Mutex
 
-// EnumDisplayMonitors needs a C callback. syscall/windows callbacks are NEVER
-// freed and the process has a hard cap (~2000). listMonitors runs on every
-// captured frame (~10 fps), so creating a fresh callback each call exhausted
-// the cap in ~1-2 minutes and crashed the agent. Create it exactly once and
-// reuse it; the enum result is passed through package state under enumMu.
-var (
-	enumMu       sync.Mutex
-	enumMonitors []Monitor
-	enumCbOnce   sync.Once
-	enumCb       uintptr
-)
-
-func monitorEnumProc(hmon, hdc, r, lparam uintptr) uintptr {
-	var mi monitorInfo
-	mi.CbSize = uint32(unsafe.Sizeof(mi))
-	ret, _, _ := procGetMonitorInfoW.Call(hmon, uintptr(unsafe.Pointer(&mi)))
-	if ret == 0 {
-		return 1
-	}
-	enumMonitors = append(enumMonitors, Monitor{
-		Index:   len(enumMonitors),
-		X:       int(mi.RcMonitor.Left),
-		Y:       int(mi.RcMonitor.Top),
-		Width:   int(mi.RcMonitor.Right - mi.RcMonitor.Left),
-		Height:  int(mi.RcMonitor.Bottom - mi.RcMonitor.Top),
-		Primary: mi.DwFlags&1 != 0,
-	})
-	return 1
-}
-
 func listMonitors() ([]Monitor, error) {
-	enumMu.Lock()
-	defer enumMu.Unlock()
-	enumCbOnce.Do(func() { enumCb = windows.NewCallback(monitorEnumProc) })
-	enumMonitors = enumMonitors[:0]
-	ret, _, err := procEnumDisplayMonitors.Call(0, 0, enumCb, 0)
+	var monitors []Monitor
+	cb := windows.NewCallback(func(hmon, hdc uintptr, r uintptr, lparam uintptr) uintptr {
+		var mi monitorInfo
+		mi.CbSize = uint32(unsafe.Sizeof(mi))
+		ret, _, _ := procGetMonitorInfoW.Call(hmon, uintptr(unsafe.Pointer(&mi)))
+		if ret == 0 {
+			return 1
+		}
+		monitors = append(monitors, Monitor{
+			Index:   len(monitors),
+			X:       int(mi.RcMonitor.Left),
+			Y:       int(mi.RcMonitor.Top),
+			Width:   int(mi.RcMonitor.Right - mi.RcMonitor.Left),
+			Height:  int(mi.RcMonitor.Bottom - mi.RcMonitor.Top),
+			Primary: mi.DwFlags&1 != 0,
+		})
+		return 1
+	})
+	ret, _, err := procEnumDisplayMonitors.Call(0, 0, cb, 0)
 	if ret == 0 {
 		if err != windows.ERROR_SUCCESS {
 			return nil, err
 		}
 		return nil, errors.New("capture: EnumDisplayMonitors failed")
 	}
-	return append([]Monitor(nil), enumMonitors...), nil
+	return monitors, nil
 }
 
 func captureMonitor(index int, quality int) (Frame, error) {

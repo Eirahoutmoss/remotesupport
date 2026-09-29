@@ -20,7 +20,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -466,7 +465,6 @@ func startSessionStats(peer *webrtcpeer.Peer) {
 	lastActivityUnix.Store(time.Now().Unix())
 	framesRecv.Store(0)
 	go func() {
-		defer logCrash("sessionStats")
 		var last uint64
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
@@ -1759,7 +1757,6 @@ func sendRemoteMonitorList(peer *webrtcpeer.Peer) {
 
 func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 	go func() {
-		defer logCrash("capture")
 		if err := peer.WaitScreen(ctx); err != nil {
 			if ctx.Err() == nil {
 				setStatus("● Ekran kanalı bekleniyor: " + err.Error())
@@ -2546,21 +2543,6 @@ func chatEditProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 	return r
 }
 
-func logCrash(where string) {
-	if r := recover(); r != nil {
-		base, err := os.UserConfigDir()
-		if err == nil && base != "" {
-			dir := filepath.Join(base, "RemoteSupport")
-			_ = os.MkdirAll(dir, 0700)
-			if f, e := os.OpenFile(filepath.Join(dir, "crash.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); e == nil {
-				fmt.Fprintf(f, "%s PANIC in %s: %v\n%s\n\n", time.Now().Format(time.RFC3339), where, r, debug.Stack())
-				f.Close()
-			}
-		}
-		setStatus("● Bir hata yakalandı ve kaydedildi (crash.log).")
-	}
-}
-
 func auditLog(event string) {
 	base, err := os.UserConfigDir()
 	if err != nil || base == "" {
@@ -3043,7 +3025,6 @@ func startTarget() {
 	setStatus(fmt.Sprintf("● Hazır  •  Kod yaklaşık %d saniye geçerli", expires))
 
 	go func() {
-		defer logCrash("codeCountdown")
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
 		for range t.C {
@@ -3062,7 +3043,6 @@ func startTarget() {
 }
 
 func targetLoop(ctx context.Context, c *clientsignaling.Client) {
-	defer logCrash("targetLoop")
 	for {
 		msg, err := c.Read(ctx)
 		if err != nil {
@@ -3097,8 +3077,8 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 			state.peer = peer
 			state.mu.Unlock()
 
-			peer.SetControlHandler(func(msg string) { defer logCrash("control"); handleRemoteInput(peer, msg) })
-			peer.SetFileHandler(func(d []byte) { defer logCrash("file"); handleRemoteFile(d) })
+			peer.SetControlHandler(func(msg string) { handleRemoteInput(peer, msg) })
+			peer.SetFileHandler(handleRemoteFile)
 			setStatus("● İstek onaylandı. Güvenli bağlantı kuruluyor...")
 			startCapture(peer, ctx)
 			go watchPeer(peer)
@@ -3134,7 +3114,6 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 }
 
 func startOperator(code string) {
-	defer logCrash("startOperator")
 	setActiveCode(code)
 	activeTargetMonitorMu.Lock()
 	activeTargetMonitor = capture.Monitor{}
@@ -3186,8 +3165,8 @@ func startOperator(code string) {
 			state.mu.Unlock()
 
 			peer.SetScreenHandler(setViewerFrame)
-			peer.SetControlHandler(func(msg string) { defer logCrash("control"); handleRemoteInput(peer, msg) })
-			peer.SetFileHandler(func(d []byte) { defer logCrash("file"); handleRemoteFile(d) })
+			peer.SetControlHandler(func(msg string) { handleRemoteInput(peer, msg) })
+			peer.SetFileHandler(handleRemoteFile)
 
 			if err := peer.CreateControl(); err != nil {
 				setStatus("● Kontrol kanalı açılamadı: " + err.Error())
@@ -3254,7 +3233,6 @@ func showConnectedView() {
 }
 
 func watchPeer(peer *webrtcpeer.Peer) {
-	defer logCrash("watchPeer")
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
