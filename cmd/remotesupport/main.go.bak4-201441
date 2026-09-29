@@ -66,10 +66,7 @@ const (
 	ID_CLIP_SEND      = 5003
 	ID_CLIP_GET       = 5004
 	ID_CHAT_SEND      = 5005
-	ID_STAY_OPEN      = 5006
 	WM_APP_MONITORS   = 0x8001
-	WM_APP_IDLE       = 0x8002
-	WM_APP_IDLE_CLOSE = 0x8003
 )
 
 var (
@@ -127,7 +124,6 @@ var (
 	createFont       = gdi32DLL.NewProc("CreateFontW")
 	createSolidBrush = gdi32DLL.NewProc("CreateSolidBrush")
 	setTextColor     = gdi32DLL.NewProc("SetTextColor")
-	setBkColor       = gdi32DLL.NewProc("SetBkColor")
 	setBkMode        = gdi32DLL.NewProc("SetBkMode")
 	patBlt           = gdi32DLL.NewProc("PatBlt")
 	ellipse          = gdi32DLL.NewProc("Ellipse")
@@ -137,11 +133,6 @@ var (
 	globalLock       = kernel32.NewProc("GlobalLock")
 	globalUnlock     = kernel32.NewProc("GlobalUnlock")
 	getOpenFileName  = comdlg32.NewProc("GetOpenFileNameW")
-	isDialogMessage  = user32.NewProc("IsDialogMessageW")
-	commDlgError     = comdlg32.NewProc("CommDlgExtendedError")
-	messageBeep      = user32.NewProc("MessageBeep")
-	flashWindow      = user32.NewProc("FlashWindow")
-	callWindowProc   = user32.NewProc("CallWindowProcW")
 )
 
 type point struct{ X, Y int32 }
@@ -168,7 +159,7 @@ type openFileName struct {
 	TemplateName  *uint16
 	Reserved      uintptr
 	Reserved2     uint32
-	FlagsEx       uint32
+	ExHook        uintptr
 }
 
 type fileReceiveState struct {
@@ -232,9 +223,6 @@ type windowState struct {
 	settingsResolution uintptr
 	settingsSave       uintptr
 	settingsReset      uintptr
-	settingsIdle       uintptr
-	settingsIdleAction uintptr
-	stayOpen           uintptr
 	header             uintptr
 	subtitle           uintptr
 	statusText         string
@@ -278,7 +266,7 @@ const (
 	uiNavColor    = 0x080F1C // left navigation rail (darkest surface)
 	uiPanelColor  = 0x131F30 // cards / panels
 	uiPanelHi     = 0x182842 // hovered / active panel
-	uiEditColor   = 0x070C16 // input fields, code box (darker for contrast)
+	uiEditColor   = 0x0D1726 // input fields, code box
 	uiBorderColor = 0x21324B // hairline dividers / borders
 	uiTextColor   = 0xEDF2F8 // primary text
 	uiMutedColor  = 0x93A4BA // secondary text
@@ -290,7 +278,6 @@ const (
 	uiSuccess     = 0x26D07C // "connected" / live status
 	uiDanger      = 0xEF4655 // disconnect / destructive
 	uiDangerHi    = 0xF56672 // disconnect highlight
-	uiWarn        = 0xF5A623 // caution (medium link quality)
 )
 
 type appSettings struct {
@@ -298,12 +285,10 @@ type appSettings struct {
 	Quality      int    `json:"quality"`
 	MaxHeight    int    `json:"max_height"`
 	InputEnabled bool   `json:"input_enabled"`
-	IdleWarnMin  int    `json:"idle_warn_min"`
-	IdleClose    bool   `json:"idle_close"`
 }
 
 var settingsMu sync.RWMutex
-var appCfg = appSettings{Quality: 88, MaxHeight: 0, InputEnabled: true, IdleWarnMin: 10, IdleClose: false}
+var appCfg = appSettings{Quality: 88, MaxHeight: 0, InputEnabled: true}
 
 func settingsPath() string {
 	base, err := os.UserConfigDir()
@@ -333,9 +318,6 @@ func loadSettings() {
 	}
 	if cfg.MaxHeight != 0 && cfg.MaxHeight != 1080 && cfg.MaxHeight != 720 && cfg.MaxHeight != 480 {
 		cfg.MaxHeight = 0
-	}
-	if cfg.IdleWarnMin != 0 && cfg.IdleWarnMin != 10 && cfg.IdleWarnMin != 20 && cfg.IdleWarnMin != 30 {
-		cfg.IdleWarnMin = 10
 	}
 	settingsMu.Lock()
 	appCfg = cfg
@@ -373,8 +355,6 @@ var sessionStartUnix atomic.Int64 // connect time (unix nanos); 0 = not connecte
 var framesRecv atomic.Uint64      // total frames the operator has rendered
 var fpsValue atomic.Int32         // frames/second, refreshed once per second
 var capturing atomic.Bool         // agent is actively streaming its own screen
-var lastActivityUnix atomic.Int64 // last remote-control input (either side)
-var idleWarn atomic.Bool          // idle warning currently shown
 
 var connInfoMu sync.Mutex
 var connPathStr string // "direct" / "relay" / ""
@@ -418,7 +398,6 @@ func resetConnInfo() {
 	framesRecv.Store(0)
 	fpsValue.Store(0)
 	capturing.Store(false)
-	idleWarn.Store(false)
 }
 
 func isElevated() bool {
@@ -462,7 +441,6 @@ func sessionElapsed() string {
 // session is live, then repaints the shell so the stat strip stays current.
 func startSessionStats(peer *webrtcpeer.Peer) {
 	sessionStartUnix.Store(time.Now().UnixNano())
-	lastActivityUnix.Store(time.Now().Unix())
 	framesRecv.Store(0)
 	go func() {
 		var last uint64
@@ -481,22 +459,6 @@ func startSessionStats(peer *webrtcpeer.Peer) {
 			if _, sas := getConnInfo(); sas == "" {
 				if v, ok := peer.FingerprintSAS(getActiveCode()); ok {
 					setConnInfo("", v)
-				}
-			}
-			cfg := currentSettings()
-			if cfg.IdleWarnMin > 0 {
-				idle := time.Now().Unix() - lastActivityUnix.Load()
-				warnAt := int64(cfg.IdleWarnMin) * 60
-				if idle >= warnAt {
-					if !idleWarn.Swap(true) && state.hwnd != 0 {
-						postMessage.Call(state.hwnd, WM_APP_IDLE, 0, 0)
-					}
-					if cfg.IdleClose && idle >= warnAt+60 && state.hwnd != 0 {
-						postMessage.Call(state.hwnd, WM_APP_IDLE_CLOSE, 0, 0)
-						return
-					}
-				} else if idleWarn.Swap(false) && state.hwnd != 0 {
-					postMessage.Call(state.hwnd, WM_APP_IDLE, 0, 0)
 				}
 			}
 			if state.hwnd != 0 {
@@ -856,43 +818,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func saveViewerScreenshot() {
-	viewer.mu.RLock()
-	w, h := viewer.width, viewer.height
-	px := viewer.pixels
-	viewer.mu.RUnlock()
-	if w <= 0 || h <= 0 || len(px) < w*h*4 {
-		setStatus("● Ekran görüntüsü alınamadı: görüntü yok.")
-		return
-	}
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for i := 0; i < w*h; i++ {
-		img.Pix[i*4+0] = px[i*4+2] // R (frame is BGRA)
-		img.Pix[i*4+1] = px[i*4+1] // G
-		img.Pix[i*4+2] = px[i*4+0] // B
-		img.Pix[i*4+3] = 255
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		setStatus("● Ekran görüntüsü kaydedilemedi.")
-		return
-	}
-	dir := filepath.Join(home, "Downloads")
-	_ = os.MkdirAll(dir, 0755)
-	path := filepath.Join(dir, fmt.Sprintf("RemoteSupport-%s.jpg", time.Now().Format("20060102-150405")))
-	f, err := os.Create(path)
-	if err != nil {
-		setStatus("● Ekran görüntüsü kaydedilemedi: " + err.Error())
-		return
-	}
-	defer f.Close()
-	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: 90}); err != nil {
-		setStatus("● Ekran görüntüsü kodlanamadı.")
-		return
-	}
-	setStatus("● Ekran görüntüsü kaydedildi: " + path)
-}
-
 func setViewerFrame(f screen.Frame) {
 	img, err := jpeg.Decode(bytes.NewReader(f.JPEG))
 	if err != nil {
@@ -1143,10 +1068,6 @@ func viewerWndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 			toggleFullscreen()
 			return 0
 		}
-		if wParam == 0x7B { // VK_F12: local screenshot, do not forward
-			go saveViewerScreenshot()
-			return 0
-		}
 		if wParam != 0 {
 			sendRemoteKey("keydown", uint16(wParam))
 		}
@@ -1213,7 +1134,6 @@ func sendRemoteInput(peer *webrtcpeer.Peer, ev protocol.InputEvent) {
 	if peer == nil {
 		return
 	}
-	lastActivityUnix.Store(time.Now().Unix())
 	if err := ev.Validate(); err != nil {
 		return
 	}
@@ -1559,7 +1479,6 @@ func absoluteMouseInput(ev protocol.InputEvent, extraFlags uint32, mouseData uin
 }
 
 func injectRemoteMouse(ev protocol.InputEvent) {
-	lastActivityUnix.Store(time.Now().Unix())
 	flags := uint32(mouseMove)
 	data := uint32(0)
 	switch ev.T {
@@ -1597,7 +1516,6 @@ func injectRemoteMouse(ev protocol.InputEvent) {
 }
 
 func injectRemoteKey(ev protocol.InputEvent) {
-	lastActivityUnix.Store(time.Now().Unix())
 	vk := uint16(ev.K)
 	if vk == 0 {
 		return
@@ -1630,41 +1548,16 @@ func isExtendedVirtualKey(vk uint16) bool {
 
 func chooseFile() (string, bool) {
 	buf := make([]uint16, 32768)
-	// Build a valid double-NUL-terminated filter (utf16ptr stops at the first NUL).
-	fa, _ := syscall.UTF16FromString("Tüm Dosyalar (*.*)")
-	fb, _ := syscall.UTF16FromString("*.*")
-	filterBuf := append(append(fa, fb...), 0)
-	ofn := openFileName{
-		StructSize: uint32(unsafe.Sizeof(openFileName{})),
-		Owner:      state.hwnd,
-		Filter:     &filterBuf[0],
-		File:       &buf[0],
-		MaxFile:    uint32(len(buf)),
-		Flags:      0x00080000 | 0x00001000 | 0x00000800, // OFN_EXPLORER | FILEMUSTEXIST | PATHMUSTEXIST
-	}
+	filter := utf16ptr("Tüm Dosyalar (*.*)\x00*.*\x00\x00")
+	ofn := openFileName{StructSize: uint32(unsafe.Sizeof(openFileName{})), Owner: state.hwnd, Filter: filter, File: &buf[0], MaxFile: uint32(len(buf)), Flags: 0x00001000 | 0x00000800}
 	r, _, _ := getOpenFileName.Call(uintptr(unsafe.Pointer(&ofn)))
-	runtime.KeepAlive(filterBuf)
-	runtime.KeepAlive(buf)
 	if r == 0 {
-		code, _, _ := commDlgError.Call()
-		if code != 0 {
-			msg := utf16ptr(fmt.Sprintf("Dosya seçici açılamadı (hata kodu %d).", code))
-			title := utf16ptr(appTitle)
-			messageBox.Call(state.hwnd, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(title)), 0x00000010)
-		}
 		return "", false
 	}
 	return syscall.UTF16ToString(buf), true
 }
 
-func fileNotify(msg string) {
-	setStatus(msg)
-	t := utf16ptr(appTitle)
-	m := utf16ptr(msg)
-	messageBox.Call(0, uintptr(unsafe.Pointer(m)), uintptr(unsafe.Pointer(t)), 0x00000040)
-}
-
-func sendFileToPeer(path string) {
+func sendFileToPeer() {
 	fileSendMu.Lock()
 	defer fileSendMu.Unlock()
 
@@ -1672,7 +1565,11 @@ func sendFileToPeer(path string) {
 	peer := state.peer
 	state.mu.Unlock()
 	if peer == nil || peer.ConnectionState() != webrtc.PeerConnectionStateConnected {
-		fileNotify("Dosya gönderilemiyor: bağlantı hazır değil.")
+		setStatus("● Dosya gönderilemiyor: bağlantı hazır değil.")
+		return
+	}
+	path, ok := chooseFile()
+	if !ok {
 		return
 	}
 	f, err := os.Open(path)
@@ -1694,7 +1591,7 @@ func sendFileToPeer(path string) {
 	deadline := time.Now().Add(10 * time.Second)
 	for !peer.FileReady() {
 		if time.Now().After(deadline) {
-			fileNotify("Dosya kanalı hazır değil (10 sn içinde açılmadı).")
+			setStatus("● Dosya kanalı hazır değil.")
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -1704,7 +1601,7 @@ func sendFileToPeer(path string) {
 		Size int64  `json:"size"`
 	}{filepath.Base(path), info.Size()})
 	if err := peer.SendFileData(append([]byte{0x01}, meta...)); err != nil {
-		fileNotify("Dosya başlatılamadı: " + err.Error())
+		setStatus("● Dosya başlatılamadı: " + err.Error())
 		return
 	}
 	buf := make([]byte, 48*1024)
@@ -1715,12 +1612,9 @@ func sendFileToPeer(path string) {
 			packet := make([]byte, n+1)
 			packet[0] = 0x02
 			copy(packet[1:], buf[:n])
-			for peer.FileBufferedAmount() > 8*1024*1024 {
-				time.Sleep(5 * time.Millisecond)
-			}
 			if err := peer.SendFileData(packet); err != nil {
 				_ = peer.SendFileData([]byte{0x04})
-				fileNotify("Dosya gönderimi kesildi: " + err.Error())
+				setStatus("● Dosya gönderimi kesildi: " + err.Error())
 				return
 			}
 			sent += int64(n)
@@ -1743,7 +1637,7 @@ func sendFileToPeer(path string) {
 		setStatus("● Dosya tamamlanamadı: " + err.Error())
 		return
 	}
-	fileNotify("Dosya gönderildi: " + filepath.Base(path))
+	setStatus("● Dosya gönderildi: " + filepath.Base(path))
 }
 
 func sendRemoteMonitorList(peer *webrtcpeer.Peer) {
@@ -2085,7 +1979,6 @@ func layoutUI() {
 	hide(state.clipGet)
 	hide(state.chatInput)
 	hide(state.chatSend)
-	hide(state.stayOpen)
 
 	if connected && !fullscreen.Load() {
 		// Toolbar action buttons sit on the painted toolbar surface (y≈104).
@@ -2101,7 +1994,6 @@ func layoutUI() {
 		// Prominent red disconnect in the header (ID_BACK stops the session).
 		setText(state.back, "Bağlantıyı Kes")
 		moveControl(state.back, w-190, 22, 166, 42, true)
-		moveControl(state.stayOpen, w-370, 22, 150, 42, idleWarn.Load())
 		moveControl(state.action, 0, 0, 1, 1, false)
 		moveControl(state.copy, 0, 0, 1, 1, false)
 		moveControl(state.codeLabel, 0, 0, 1, 1, false)
@@ -2116,12 +2008,10 @@ func layoutUI() {
 
 	if mode == 10 {
 		moveControl(state.settingsEndpoint, 520, 235, 520, 44, true)
-		moveControl(state.settingsQuality, 520, 335, 180, 240, true)
-		moveControl(state.settingsResolution, 760, 335, 180, 240, true)
-		moveControl(state.settingsIdle, 520, 490, 180, 240, true)
-		moveControl(state.settingsIdleAction, 760, 490, 260, 240, true)
-		moveControl(state.settingsSave, 520, 556, 180, 44, true)
-		moveControl(state.settingsReset, 720, 556, 220, 44, true)
+		moveControl(state.settingsQuality, 520, 335, 180, 40, true)
+		moveControl(state.settingsResolution, 760, 335, 180, 40, true)
+		moveControl(state.settingsSave, 520, 500, 180, 44, true)
+		moveControl(state.settingsReset, 720, 500, 220, 44, true)
 		return
 	}
 	if mode == 11 {
@@ -2159,7 +2049,6 @@ func layoutUI() {
 				moveControl(state.chatSend, cg.sendX, cg.inputY, cg.sendW, cg.inputH, true)
 			}
 			moveControl(state.back, w-gutter-180, 118, 168, 40, true)
-			moveControl(state.stayOpen, contentX, 214, 150, 40, idleWarn.Load())
 			return
 		}
 		setText(state.back, "‹ Geri")
@@ -2378,7 +2267,7 @@ func computeChatGeom(w, h int) chatGeom {
 	if active && !fullscreen.Load() {
 		cw := 300
 		cx := w - gutter - cw
-		cy := 160 // below the toolbar strip (was 106, overlapped the buttons)
+		cy := 106
 		ch := h - footerH - 16 - cy - (inputH + 10)
 		if ch < 60 {
 			ch = 60
@@ -2446,121 +2335,6 @@ func paintChatPanel(hdc uintptr, g chatGeom) {
 	}
 }
 
-// ---- Recent connections (persisted to the config dir) ----
-type recentConn struct {
-	Role string `json:"role"`
-	Code string `json:"code"`
-	At   int64  `json:"at"`
-}
-
-var recentMu sync.Mutex
-var recentList []recentConn
-
-func recentPath() string {
-	base, err := os.UserConfigDir()
-	if err != nil || base == "" {
-		return ""
-	}
-	dir := filepath.Join(base, "RemoteSupport")
-	_ = os.MkdirAll(dir, 0700)
-	return filepath.Join(dir, "recent.json")
-}
-
-func loadRecent() {
-	path := recentPath()
-	if path == "" {
-		return
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	var list []recentConn
-	if json.Unmarshal(b, &list) != nil {
-		return
-	}
-	if len(list) > 8 {
-		list = list[:8]
-	}
-	recentMu.Lock()
-	recentList = list
-	recentMu.Unlock()
-}
-
-func addRecent(role, code string) {
-	code = strings.ReplaceAll(strings.TrimSpace(code), " ", "")
-	if code == "" {
-		return
-	}
-	rc := recentConn{Role: role, Code: code, At: time.Now().Unix()}
-	recentMu.Lock()
-	recentList = append([]recentConn{rc}, recentList...)
-	if len(recentList) > 8 {
-		recentList = recentList[:8]
-	}
-	snap := append([]recentConn(nil), recentList...)
-	recentMu.Unlock()
-	if path := recentPath(); path != "" {
-		if b, err := json.MarshalIndent(snap, "", "  "); err == nil {
-			_ = os.WriteFile(path, b, 0600)
-		}
-	}
-	if state.hwnd != 0 {
-		invalidateRect.Call(state.hwnd, 0, 0)
-	}
-}
-
-func recentSnapshot() []recentConn {
-	recentMu.Lock()
-	defer recentMu.Unlock()
-	return append([]recentConn(nil), recentList...)
-}
-
-func relativeTime(unix int64) string {
-	d := time.Since(time.Unix(unix, 0))
-	switch {
-	case d < time.Minute:
-		return "az önce"
-	case d < time.Hour:
-		return fmt.Sprintf("%d dk önce", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%d saat önce", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%d gün önce", int(d.Hours())/24)
-	}
-}
-
-var codeExpiryUnix atomic.Int64
-var origEditProc uintptr
-
-// chatEditProc subclasses the chat input so Enter sends the message.
-func chatEditProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
-	if m == 0x0087 { // WM_GETDLGCODE: want Enter/chars
-		return 0x0004 | 0x0080 // DLGC_WANTALLKEYS | DLGC_WANTCHARS
-	}
-	if m == 0x0102 && wParam == 0x0D { // WM_CHAR, Enter
-		sendChat()
-		return 0
-	}
-	r, _, _ := callWindowProc.Call(origEditProc, hwnd, uintptr(m), wParam, lParam)
-	return r
-}
-
-func auditLog(event string) {
-	base, err := os.UserConfigDir()
-	if err != nil || base == "" {
-		return
-	}
-	dir := filepath.Join(base, "RemoteSupport")
-	_ = os.MkdirAll(dir, 0700)
-	f, err := os.OpenFile(filepath.Join(dir, "audit.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "%s\t%s\n", time.Now().Format("2006-01-02 15:04:05"), event)
-}
-
 func paintShell(hdc uintptr) {
 	var rc rect
 	getClientRect.Call(state.hwnd, uintptr(unsafe.Pointer(&rc)))
@@ -2593,28 +2367,12 @@ func paintShell(hdc uintptr) {
 		paintHome(hdc, w, h, contentW)
 	case mode == 1 && capturing.Load():
 		paintAgentSharingBanner(hdc, w)
-		if idleWarn.Load() {
-			paintText(hdc, "Oturum boşta — sürdürmek için 'Açık Kal'", contentX+164, 214, w-contentX-gutter-164, 40, uiButtonFont, uiWarn, txVLeft)
-		}
 		paintChatPanel(hdc, computeChatGeom(w, h))
 	case mode == 1:
 		paintPageHeader(hdc, "Destek Al", "Bu kodu destek verecek kişiye iletin.")
 		paintText(hdc, "BAĞLANTI KODUNUZ", contentX, 300, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
 		paintCard(hdc, contentX, 322, 782, 128, uiEditColor, uiBorderColor, 16)
 		paintText(hdc, "Kod oluşturulduğunda burada görünür ve otomatik paylaşılır.", contentX, 470, 782, 20, uiBodyFont, uiFaintColor, txVLeft)
-		if exp := codeExpiryUnix.Load(); exp > 0 {
-			rem := exp - time.Now().Unix()
-			if rem < 0 {
-				rem = 0
-			}
-			var ccol uint32 = uiCyanColor
-			label := fmt.Sprintf("Kalan süre  %02d:%02d", rem/60, rem%60)
-			if rem == 0 {
-				label = "Kod süresi doldu — Geri dönüp tekrar başlatın"
-				ccol = uiDanger
-			}
-			paintText(hdc, label, contentX, 300, 782, 18, uiLabelFont, ccol, txVRight)
-		}
 	case mode == 2:
 		paintPageHeader(hdc, "Destek Ver", "Karşı bilgisayarda görünen 6 haneli kodu girin.")
 		paintText(hdc, "BAĞLANTI KODU", contentX, 326, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
@@ -2656,9 +2414,6 @@ func paintTopBar(hdc uintptr, w int, connected bool, status string) {
 				info = "SAS " + sas
 			}
 			paintText(hdc, info, px+92, 22, 138, 42, uiSmallFont, uiCyanColor, txEnd)
-		}
-		if idleWarn.Load() {
-			paintText(hdc, "Oturum boşta kaldı", w-690, 22, 300, 42, uiButtonFont, uiWarn, txVRight)
 		}
 		return
 	}
@@ -2734,36 +2489,15 @@ func paintPageHeader(hdc uintptr, title, subtitle string) {
 func paintHome(hdc uintptr, w, h, contentW int) {
 	paintPageHeader(hdc, "Uzaktan Destek", "Bilgisayarınızı güvenli bir bağlantıyla yönetin veya destek alın.")
 
-	// "Son Bağlantılar" panel.
+	// "Son Bağlantılar" panel (empty state — no history is stored yet).
 	recentY := 400
 	recentH := h - footerH - recentY - 16
-	if recentH <= 90 {
-		return
-	}
-	paintCard(hdc, contentX, recentY, contentW, recentH, uiPanelColor, uiBorderColor, 14)
-	paintText(hdc, "SON BAĞLANTILAR", contentX+22, recentY+18, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
-	fillBand(hdc, contentX+22, recentY+44, contentW-44, 1, rgb(uiBorderColor))
-	items := recentSnapshot()
-	if len(items) == 0 {
+	if recentH > 90 {
+		paintCard(hdc, contentX, recentY, contentW, recentH, uiPanelColor, uiBorderColor, 14)
+		paintText(hdc, "SON BAĞLANTILAR", contentX+22, recentY+18, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
+		fillBand(hdc, contentX+22, recentY+44, contentW-44, 1, rgb(uiBorderColor))
 		paintText(hdc, "Henüz bağlantı geçmişi yok.", contentX+22, recentY+58, contentW-44, 22, uiSubtitleFont, uiFaintColor, txVLeft)
 		paintText(hdc, "Kurduğunuz oturumlar burada listelenecek.", contentX+22, recentY+84, contentW-44, 20, uiBodyFont, uiFaintColor, txVLeft)
-		return
-	}
-	rowH := 40
-	y := recentY + 54
-	maxRows := (recentY + recentH - 12 - y) / rowH
-	if maxRows < 1 {
-		maxRows = 1
-	}
-	if len(items) > maxRows {
-		items = items[:maxRows]
-	}
-	for _, it := range items {
-		paintDot(hdc, contentX+30, y+rowH/2, 4, uiSuccess)
-		paintText(hdc, it.Role, contentX+48, y, 220, rowH, uiSubtitleFont, uiTextColor, txVLeft)
-		paintText(hdc, "Kod "+formatCode(it.Code), contentX+280, y, 220, rowH, uiBodyFont, uiMutedColor, txVLeft)
-		paintText(hdc, relativeTime(it.At), contentX+48, y, contentW-70, rowH, uiSmallFont, uiFaintColor, txVRight)
-		y += rowH
 	}
 }
 
@@ -2786,24 +2520,8 @@ func paintConnectedChrome(hdc uintptr, w, h int) {
 	if pathLabel == "" {
 		pathLabel = "Yol belirleniyor…"
 	}
-	fps := fpsValue.Load()
-	qCol := uint32(uiSuccess)
-	qLabel := "İyi"
-	if fps < 8 {
-		qCol = uiDanger
-		qLabel = "Zayıf"
-	} else if fps < 18 {
-		qCol = uiWarn
-		qLabel = "Orta"
-	}
-	idleS := time.Now().Unix() - lastActivityUnix.Load()
-	if idleS < 0 {
-		idleS = 0
-	}
 	parts := []string{
-		"Bağlantı: " + qLabel,
 		"Süre: " + sessionElapsed(),
-		fmt.Sprintf("Boşta: %02d:%02d", idleS/60, idleS%60),
 		fmt.Sprintf("%d FPS", fpsValue.Load()),
 		"Çözünürlük: " + res,
 		"Kodek: H.264",
@@ -2813,8 +2531,7 @@ func paintConnectedChrome(hdc uintptr, w, h int) {
 		parts = append(parts, "SAS: "+sas)
 	}
 	stats := strings.Join(parts, "     •     ")
-	paintDot(hdc, contentX+12, stripY+6, 4, qCol)
-	paintText(hdc, stats, contentX+24, stripY, w-contentX-gutter-24, 12, uiSmallFont, uiFaintColor, txVLeft)
+	paintText(hdc, stats, contentX+8, stripY, w-contentX-gutter-8, 12, uiSmallFont, uiFaintColor, txVLeft)
 	paintChatPanel(hdc, computeChatGeom(w, h))
 }
 
@@ -2838,16 +2555,12 @@ func paintSettings(hdc uintptr, w int) {
 	paintText(hdc, "BAĞLANTI", contentX+24, 206, 200, 18, uiLabelFont, uiAccentColor, txVLeft)
 	paintText(hdc, "İnternet Signaling", contentX+24, 232, 260, 22, uiSubtitleFont, uiTextColor, txVLeft)
 	paintText(hdc, "WSS / WS adresi. Boş bırakılırsa LAN keşfi kullanılır.", contentX+24, 262, 320, 20, uiBodyFont, uiMutedColor, txVLeft)
-	paintCard(hdc, contentX, 314, cw, 84, uiPanelColor, uiBorderColor, 14)
-	paintText(hdc, "GÖRÜNTÜ", contentX+24, 328, 200, 18, uiLabelFont, uiAccentColor, txVLeft)
-	paintText(hdc, "Kalite", 520, 352, 120, 18, uiSmallFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Maksimum yükseklik", 760, 352, 180, 18, uiSmallFont, uiMutedColor, txVLeft)
-	paintCard(hdc, contentX, 410, cw, 124, uiPanelColor, uiBorderColor, 14)
-	paintText(hdc, "OTURUM GÜVENLİĞİ", contentX+24, 426, 260, 18, uiLabelFont, uiAccentColor, txVLeft)
-	paintText(hdc, "Boşta kalınca uyarır. Sistemciler için varsayılan: oturum açık kalır.", contentX+24, 452, cw-300, 20, uiBodyFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Boşta kalma uyarısı", 520, 470, 180, 18, uiSmallFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Süre dolunca", 760, 470, 200, 18, uiSmallFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Ayarlar uygulama yeniden başlatıldığında korunur.", contentX, 612, cw, 20, uiBodyFont, uiFaintColor, txVLeft)
+	paintCard(hdc, contentX, 314, cw, 112, uiPanelColor, uiBorderColor, 14)
+	paintText(hdc, "GÖRÜNTÜ", contentX+24, 330, 200, 18, uiLabelFont, uiAccentColor, txVLeft)
+	paintText(hdc, "Aktarım kalitesi ve en yüksek çözünürlük.", contentX+24, 356, 300, 20, uiBodyFont, uiMutedColor, txVLeft)
+	paintText(hdc, "Kalite", 520, 356, 120, 18, uiSmallFont, uiMutedColor, txVLeft)
+	paintText(hdc, "Maksimum yükseklik", 760, 356, 180, 18, uiSmallFont, uiMutedColor, txVLeft)
+	paintText(hdc, "Ayarlar uygulama yeniden başlatıldığında korunur.", contentX, 466, cw, 20, uiBodyFont, uiFaintColor, txVLeft)
 }
 
 func paintAbout(hdc uintptr, w int) {
@@ -2888,7 +2601,7 @@ func createControl(parent uintptr, class, text string, style uint32, x, y, w, h,
 		0,
 		uintptr(unsafe.Pointer(utf16ptr(class))),
 		uintptr(unsafe.Pointer(utf16ptr(text))),
-		uintptr(style|0x40000000|0x10000000|0x00010000), // + WS_TABSTOP
+		uintptr(style|0x40000000|0x10000000),
 		uintptr(x), uintptr(y), uintptr(w), uintptr(h),
 		parent, uintptr(id), moduleHandle(), 0,
 	)
@@ -2931,7 +2644,7 @@ func show(hwnd uintptr) {
 func clearChildren() {
 	clearResolutionButtons()
 	for _, h := range []uintptr{
-		state.homeGet, state.homeGive, state.codeLabel, state.remoteEdit, state.action, state.copy, state.back, state.fileSend, state.fullscreenButton, state.settingsEndpoint, state.settingsQuality, state.settingsResolution, state.settingsSave, state.settingsReset, state.settingsIdle, state.settingsIdleAction, state.elevate, state.clipSend, state.clipGet, state.chatInput, state.chatSend, state.stayOpen,
+		state.homeGet, state.homeGive, state.codeLabel, state.remoteEdit, state.action, state.copy, state.back, state.fileSend, state.fullscreenButton, state.settingsEndpoint, state.settingsQuality, state.settingsResolution, state.settingsSave, state.settingsReset, state.elevate, state.clipSend, state.clipGet, state.chatInput, state.chatSend,
 	} {
 		hide(h)
 	}
@@ -3022,26 +2735,9 @@ func startTarget() {
 
 	setCode(formatCode(code))
 	setActiveCode(code)
-	codeExpiryUnix.Store(time.Now().Unix() + int64(expires))
-	auditLog("Kod oluşturuldu")
 	setText(state.action, "Kod hazır")
 	setStatus(fmt.Sprintf("● Hazır  •  Kod yaklaşık %d saniye geçerli", expires))
 
-	go func() {
-		t := time.NewTicker(time.Second)
-		defer t.Stop()
-		for range t.C {
-			if capturing.Load() || state.mode != 1 {
-				return
-			}
-			if state.hwnd != 0 {
-				invalidateRect.Call(state.hwnd, 0, 0)
-			}
-			if time.Now().Unix() >= codeExpiryUnix.Load() {
-				return
-			}
-		}
-	}()
 	go targetLoop(ctx, c)
 }
 
@@ -3055,18 +2751,12 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 
 		switch msg.Type {
 		case "peer_joined":
-			messageBeep.Call(0x00000040) // MB_ICONASTERISK
-			if state.hwnd != 0 {
-				flashWindow.Call(state.hwnd, 1)
-			}
-			auditLog("Bağlantı isteği alındı")
 			ok := askApproval(msg.Code)
 			if err := c.Approve(ctx, ok, ""); err != nil {
 				setStatus("● Onay gönderilemedi: " + err.Error())
 				return
 			}
 			if !ok {
-				auditLog("İstek reddedildi")
 				setStatus("Bağlantı isteği reddedildi.")
 				continue
 			}
@@ -3146,7 +2836,6 @@ func startOperator(code string) {
 	state.mu.Lock()
 	state.sig = c
 	state.mu.Unlock()
-	auditLog("Bağlantı isteği gönderildi")
 	setStatus("● Bağlantı isteği gönderildi. Karşı tarafın onayı bekleniyor...")
 
 	for {
@@ -3255,12 +2944,6 @@ func watchPeer(peer *webrtcpeer.Peer) {
 				setConnInfo("", v)
 			}
 			startSessionStats(peer)
-			recRole := "Destek verildi"
-			if state.mode == 1 {
-				recRole = "Destek alındı"
-			}
-			addRecent(recRole, getActiveCode())
-			auditLog("Bağlandı: " + recRole)
 			setStatus("● BAĞLANDI  •  Güvenli WebRTC bağlantısı aktif")
 			_ = peer.SendPing()
 			return
@@ -3508,25 +3191,6 @@ func populateSettingsControls() {
 		}
 		sendMessage.Call(state.settingsResolution, 0x014E, uintptr(idx), 0)
 	}
-	if state.settingsIdle != 0 {
-		idx := 0
-		switch cfg.IdleWarnMin {
-		case 10:
-			idx = 1
-		case 20:
-			idx = 2
-		case 30:
-			idx = 3
-		}
-		sendMessage.Call(state.settingsIdle, 0x014E, uintptr(idx), 0)
-	}
-	if state.settingsIdleAction != 0 {
-		idx := 0
-		if cfg.IdleClose {
-			idx = 1
-		}
-		sendMessage.Call(state.settingsIdleAction, 0x014E, uintptr(idx), 0)
-	}
 }
 
 func showSettings() {
@@ -3574,23 +3238,6 @@ func saveSettingsFromUI() {
 			cfg.MaxHeight = 0
 		}
 	}
-	if state.settingsIdle != 0 {
-		r, _, _ := sendMessage.Call(state.settingsIdle, 0x0147, 0, 0)
-		switch r {
-		case 1:
-			cfg.IdleWarnMin = 10
-		case 2:
-			cfg.IdleWarnMin = 20
-		case 3:
-			cfg.IdleWarnMin = 30
-		default:
-			cfg.IdleWarnMin = 0
-		}
-	}
-	if state.settingsIdleAction != 0 {
-		r, _, _ := sendMessage.Call(state.settingsIdleAction, 0x0147, 0, 0)
-		cfg.IdleClose = r == 1
-	}
 	settingsMu.Lock()
 	appCfg = cfg
 	settingsMu.Unlock()
@@ -3602,7 +3249,7 @@ func saveSettingsFromUI() {
 
 func resetSettingsUI() {
 	settingsMu.Lock()
-	appCfg = appSettings{Quality: 88, MaxHeight: 0, InputEnabled: true, IdleWarnMin: 10, IdleClose: false}
+	appCfg = appSettings{Quality: 88, MaxHeight: 0, InputEnabled: true}
 	settingsMu.Unlock()
 	saveSettings()
 	populateSettingsControls()
@@ -3611,10 +3258,7 @@ func resetSettingsUI() {
 }
 
 func onCommand(id int) {
-	// Monitor buttons use ID_MONITOR_BASE+index. Bound the range tightly so
-	// unrelated IDs in [2000,4000) (e.g. ID_FILE_SEND=3001) are NOT swallowed
-	// here — that bug made "Dosya Gönder" silently call selectMonitor instead.
-	if id >= ID_MONITOR_BASE && id < ID_MONITOR_BASE+64 {
+	if id >= ID_MONITOR_BASE && id < ID_RES_ORIGINAL {
 		selectMonitor(id - ID_MONITOR_BASE)
 		return
 	}
@@ -3629,9 +3273,7 @@ func onCommand(id int) {
 	case ID_COPY_CODE:
 		copyCode()
 	case ID_FILE_SEND:
-		if path, ok := chooseFile(); ok {
-			go sendFileToPeer(path)
-		}
+		go sendFileToPeer()
 	case ID_RES_ORIGINAL:
 		setRemoteResolution(0)
 	case ID_RES_1080P:
@@ -3665,12 +3307,6 @@ func onCommand(id int) {
 		}
 	case ID_CHAT_SEND:
 		sendChat()
-	case ID_STAY_OPEN:
-		lastActivityUnix.Store(time.Now().Unix())
-		idleWarn.Store(false)
-		layoutUI()
-		invalidateRect.Call(state.hwnd, 0, 0)
-		setStatus("● Oturum açık tutuluyor.")
 	case ID_SETTINGS:
 		sidebarPage.Store(2)
 		showSettings()
@@ -3698,7 +3334,6 @@ func onCommand(id int) {
 }
 
 func stopSession() {
-	auditLog("Oturum kapatıldı")
 	resetConnInfo()
 	resetChat()
 	hideViewer()
@@ -3723,15 +3358,6 @@ func stopSession() {
 	}
 }
 
-type measureItemStruct struct {
-	CtlType    uint32
-	CtlID      uint32
-	ItemID     uint32
-	ItemWidth  uint32
-	ItemHeight uint32
-	ItemData   uintptr
-}
-
 type drawItemStruct struct {
 	CtlType    uint32
 	CtlID      uint32
@@ -3753,35 +3379,6 @@ func buttonLabel(hwnd uintptr) string {
 	return syscall.UTF16ToString(buf[:n])
 }
 
-func drawComboItem(dis *drawItemStruct) {
-	if dis == nil || dis.HDC == 0 {
-		return
-	}
-	hdc := dis.HDC
-	r := dis.RcItem
-	selected := dis.ItemState&0x0001 != 0 // ODS_SELECTED
-	bg := uint32(uiEditColor)
-	if selected {
-		bg = uiAccentColor
-	}
-	brush, _, _ := createSolidBrush.Call(rgb(bg))
-	if brush != 0 {
-		fillRect.Call(hdc, uintptr(unsafe.Pointer(&r)), brush)
-		deleteObject.Call(brush)
-	}
-	if int32(dis.ItemID) >= 0 {
-		var tb [256]uint16
-		sendMessage.Call(dis.HwndItem, 0x0148, uintptr(dis.ItemID), uintptr(unsafe.Pointer(&tb[0]))) // CB_GETLBTEXT
-		txt := syscall.UTF16ToString(tb[:])
-		setBkMode.Call(hdc, 1)
-		setTextColor.Call(hdc, rgb(uiTextColor))
-		old, _, _ := selectObject.Call(hdc, uiBodyFont)
-		rr := rect{Left: r.Left + 10, Top: r.Top, Right: r.Right - 6, Bottom: r.Bottom}
-		drawText.Call(hdc, uintptr(unsafe.Pointer(utf16ptr(txt))), ^uintptr(0), uintptr(unsafe.Pointer(&rr)), uintptr(dtVCenter|dtSingleLine|dtEndEllip))
-		selectObject.Call(hdc, old)
-	}
-}
-
 func drawOwnerButton(dis *drawItemStruct) {
 	if dis == nil || dis.HDC == 0 {
 		return
@@ -3792,7 +3389,6 @@ func drawOwnerButton(dis *drawItemStruct) {
 	x, y := int(r.Left), int(r.Top)
 	bw, bh := int(r.Right-r.Left), int(r.Bottom-r.Top)
 	pressed := dis.ItemState&0x0001 != 0 // ODS_SELECTED
-	hot := dis.ItemState&0x0040 != 0     // ODS_HOTLIGHT (mouse hover)
 	viewer.mu.RLock()
 	connected := viewer.active
 	viewer.mu.RUnlock()
@@ -3800,7 +3396,7 @@ func drawOwnerButton(dis *drawItemStruct) {
 	// ---- Primary action cards (Destek Al / Destek Ver) ----
 	if id == ID_GET_SUPPORT || id == ID_GIVE_SUPPORT {
 		var fill, border uint32 = uiPanelColor, uiBorderColor
-		if pressed || hot {
+		if pressed {
 			fill = uiPanelHi
 			border = uiAccentColor
 		}
@@ -3868,12 +3464,6 @@ func drawOwnerButton(dis *drawItemStruct) {
 		if pressed {
 			fill = uiPanelColor
 		}
-	case id == ID_STAY_OPEN:
-		fill, border = uiSuccess, uiSuccess
-		fg = 0xFFFFFF
-		if pressed {
-			fill, border = mixHex(uiSuccess, 0x000000, 0.15), uiSuccess
-		}
 	case id == ID_CHAT_SEND:
 		fill, border = uiAccentColor, uiAccentColor
 		fg = 0xFFFFFF
@@ -3890,9 +3480,6 @@ func drawOwnerButton(dis *drawItemStruct) {
 		// Back (idle), file send, fullscreen, monitor & resolution pills.
 		fill, border = uiPanelHi, uiBorderColor
 		fg = uiTextColor
-		if hot && !pressed {
-			border = uiAccentColor
-		}
 		if pressed {
 			fill, border = uiAccentColor, uiAccentColor
 			fg = 0xFFFFFF
@@ -3916,40 +3503,22 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 		// The only prominent static is the connection-code label; give it the
 		// input-field surface so it reads as the code box painted behind it.
 		setTextColor.Call(hdc, rgb(uiTextColor))
-		setBkColor.Call(hdc, rgb(uiEditColor))
 		setBkMode.Call(hdc, 1) // TRANSPARENT
 		return uiEditBrush
 	case 0x0133: // WM_CTLCOLOREDIT
 		hdc := wParam
-		setTextColor.Call(hdc, rgb(uiTextColor))
-		setBkColor.Call(hdc, rgb(uiEditColor)) // fill the field dark (missing before -> stayed white)
-		setBkMode.Call(hdc, 2)                 // OPAQUE
+		setTextColor.Call(hdc, rgb(uiTextColor)) // was near-black on a dark field: invisible
+		setBkMode.Call(hdc, 2)                   // OPAQUE
 		return uiEditBrush
 	case 0x0135: // WM_CTLCOLORBTN
 		hdc := wParam
 		setTextColor.Call(hdc, rgb(uiTextColor))
 		setBkMode.Call(hdc, 1)
 		return uiPanelBrush
-	case 0x0134: // WM_CTLCOLORLISTBOX (combo dropdown)
-		hdc := wParam
-		setTextColor.Call(hdc, rgb(uiTextColor))
-		setBkColor.Call(hdc, rgb(uiEditColor))
-		setBkMode.Call(hdc, 2)
-		return uiEditBrush
-	case 0x002C: // WM_MEASUREITEM
-		mis := (*measureItemStruct)(unsafe.Pointer(lParam))
-		if mis != nil {
-			mis.ItemHeight = 26
-		}
-		return 1
 	case 0x002B: // WM_DRAWITEM
 		dis := (*drawItemStruct)(unsafe.Pointer(lParam))
 		if dis != nil && dis.CtlType == 4 { // ODT_BUTTON
 			drawOwnerButton(dis)
-			return 1
-		}
-		if dis != nil && dis.CtlType == 3 { // ODT_COMBOBOX
-			drawComboItem(dis)
 			return 1
 		}
 		return 0
@@ -3984,15 +3553,6 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 		updateMonitorButtons(count)
 		setStatus(fmt.Sprintf("● Uzak bilgisayarda %d monitör bulundu", count))
 		return 0
-	case WM_APP_IDLE:
-		layoutUI()
-		invalidateRect.Call(hwnd, 0, 0)
-		return 0
-	case WM_APP_IDLE_CLOSE:
-		stopSession()
-		home()
-		setStatus("● Oturum boşta kalma nedeniyle kapatıldı.")
-		return 0
 	case 0x0005: // WM_SIZE
 		layoutUI()
 		resizeViewer()
@@ -4019,7 +3579,6 @@ func addComboItems(hwnd uintptr, items ...string) {
 func main() {
 	runtime.LockOSThread()
 	loadSettings()
-	loadRecent()
 	initUITheme()
 
 	class := utf16ptr(windowClass)
@@ -4067,9 +3626,6 @@ func main() {
 	state.elevate = createControl(hwnd, "BUTTON", "Yönetici olarak yeniden başlat", 0x00000001, 700, 108, 260, 40, ID_ELEVATE)
 	state.chatInput = createControl(hwnd, "EDIT", "", 0x00000080, 0, 0, 10, 10, 0)
 	state.chatSend = createControl(hwnd, "BUTTON", "Gönder", 0x00000001, 0, 0, 10, 10, ID_CHAT_SEND)
-	origEditProc, _, _ = setWindowLongPtr.Call(state.chatInput, ^uintptr(3), syscall.NewCallback(chatEditProc))
-	state.stayOpen = createControl(hwnd, "BUTTON", "Açık Kal", 0x00000001, 0, 0, 10, 10, ID_STAY_OPEN)
-	hide(state.stayOpen)
 	hide(state.fileSend)
 	hide(state.fullscreenButton)
 	hide(state.clipSend)
@@ -4082,14 +3638,10 @@ func main() {
 	state.remoteEdit = createControl(hwnd, "EDIT", "", 0x00000001|0x00002000, 250, 190, 480, 58, ID_REMOTE_CODE)
 
 	state.settingsEndpoint = createControl(hwnd, "EDIT", "", 0x00000001|0x00002000, 520, 235, 520, 44, 0)
-	state.settingsQuality = createControl(hwnd, "COMBOBOX", "", 0x0003|0x0010|0x0200, 520, 335, 180, 240, 0)
-	state.settingsResolution = createControl(hwnd, "COMBOBOX", "", 0x0003|0x0010|0x0200, 760, 335, 180, 240, 0)
+	state.settingsQuality = createControl(hwnd, "COMBOBOX", "", 0x0003|0x00002000, 520, 335, 180, 40, 0)
+	state.settingsResolution = createControl(hwnd, "COMBOBOX", "", 0x0003|0x00002000, 760, 335, 180, 40, 0)
 	addComboItems(state.settingsQuality, "Yüksek", "Dengeli")
 	addComboItems(state.settingsResolution, "Otomatik", "1920 × 1080", "1280 × 720", "854 × 480")
-	state.settingsIdle = createControl(hwnd, "COMBOBOX", "", 0x0003|0x0010|0x0200, 520, 490, 180, 240, 0)
-	state.settingsIdleAction = createControl(hwnd, "COMBOBOX", "", 0x0003|0x0010|0x0200, 760, 490, 260, 240, 0)
-	addComboItems(state.settingsIdle, "Kapalı", "10 dk", "20 dk", "30 dk")
-	addComboItems(state.settingsIdleAction, "Açık kal", "Bağlantıyı kes")
 	state.settingsSave = createControl(hwnd, "BUTTON", "Ayarları Kaydet", 0x00000001, 520, 500, 180, 44, ID_SETTINGS_SAVE)
 	state.settingsReset = createControl(hwnd, "BUTTON", "Varsayılanlara Dön", 0x00000001, 720, 500, 220, 44, ID_SETTINGS_RESET)
 
@@ -4103,8 +3655,6 @@ func main() {
 	hide(state.settingsResolution)
 	hide(state.settingsSave)
 	hide(state.settingsReset)
-	hide(state.settingsIdle)
-	hide(state.settingsIdleAction)
 
 	state.mode = 0
 	state.statusText = "Bir işlem seç."
@@ -4118,9 +3668,6 @@ func main() {
 		r, _, _ := getMessage.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
 		if int32(r) <= 0 {
 			break
-		}
-		if d, _, _ := isDialogMessage.Call(state.hwnd, uintptr(unsafe.Pointer(&m))); d != 0 {
-			continue
 		}
 		translateMsg.Call(uintptr(unsafe.Pointer(&m)))
 		dispatchMessage.Call(uintptr(unsafe.Pointer(&m)))

@@ -250,16 +250,6 @@ func (p *Peer) SendFileData(data []byte) error {
 	return dc.Send(data)
 }
 
-func (p *Peer) FileBufferedAmount() uint64 {
-	p.mu.Lock()
-	dc := p.file
-	p.mu.Unlock()
-	if dc == nil {
-		return 0
-	}
-	return dc.BufferedAmount()
-}
-
 func (p *Peer) CreateScreen() error {
 	if !p.approved {
 		return errors.New("webrtc: local approval required")

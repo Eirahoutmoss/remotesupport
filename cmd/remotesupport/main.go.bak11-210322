@@ -1657,13 +1657,6 @@ func chooseFile() (string, bool) {
 	return syscall.UTF16ToString(buf), true
 }
 
-func fileNotify(msg string) {
-	setStatus(msg)
-	t := utf16ptr(appTitle)
-	m := utf16ptr(msg)
-	messageBox.Call(0, uintptr(unsafe.Pointer(m)), uintptr(unsafe.Pointer(t)), 0x00000040)
-}
-
 func sendFileToPeer(path string) {
 	fileSendMu.Lock()
 	defer fileSendMu.Unlock()
@@ -1672,7 +1665,7 @@ func sendFileToPeer(path string) {
 	peer := state.peer
 	state.mu.Unlock()
 	if peer == nil || peer.ConnectionState() != webrtc.PeerConnectionStateConnected {
-		fileNotify("Dosya gönderilemiyor: bağlantı hazır değil.")
+		setStatus("● Dosya gönderilemiyor: bağlantı hazır değil.")
 		return
 	}
 	f, err := os.Open(path)
@@ -1694,7 +1687,7 @@ func sendFileToPeer(path string) {
 	deadline := time.Now().Add(10 * time.Second)
 	for !peer.FileReady() {
 		if time.Now().After(deadline) {
-			fileNotify("Dosya kanalı hazır değil (10 sn içinde açılmadı).")
+			setStatus("● Dosya kanalı hazır değil.")
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -1704,7 +1697,7 @@ func sendFileToPeer(path string) {
 		Size int64  `json:"size"`
 	}{filepath.Base(path), info.Size()})
 	if err := peer.SendFileData(append([]byte{0x01}, meta...)); err != nil {
-		fileNotify("Dosya başlatılamadı: " + err.Error())
+		setStatus("● Dosya başlatılamadı: " + err.Error())
 		return
 	}
 	buf := make([]byte, 48*1024)
@@ -1720,7 +1713,7 @@ func sendFileToPeer(path string) {
 			}
 			if err := peer.SendFileData(packet); err != nil {
 				_ = peer.SendFileData([]byte{0x04})
-				fileNotify("Dosya gönderimi kesildi: " + err.Error())
+				setStatus("● Dosya gönderimi kesildi: " + err.Error())
 				return
 			}
 			sent += int64(n)
@@ -1743,7 +1736,7 @@ func sendFileToPeer(path string) {
 		setStatus("● Dosya tamamlanamadı: " + err.Error())
 		return
 	}
-	fileNotify("Dosya gönderildi: " + filepath.Base(path))
+	setStatus("● Dosya gönderildi: " + filepath.Base(path))
 }
 
 func sendRemoteMonitorList(peer *webrtcpeer.Peer) {
@@ -2378,7 +2371,7 @@ func computeChatGeom(w, h int) chatGeom {
 	if active && !fullscreen.Load() {
 		cw := 300
 		cx := w - gutter - cw
-		cy := 160 // below the toolbar strip (was 106, overlapped the buttons)
+		cy := 106
 		ch := h - footerH - 16 - cy - (inputH + 10)
 		if ch < 60 {
 			ch = 60
@@ -3611,10 +3604,7 @@ func resetSettingsUI() {
 }
 
 func onCommand(id int) {
-	// Monitor buttons use ID_MONITOR_BASE+index. Bound the range tightly so
-	// unrelated IDs in [2000,4000) (e.g. ID_FILE_SEND=3001) are NOT swallowed
-	// here — that bug made "Dosya Gönder" silently call selectMonitor instead.
-	if id >= ID_MONITOR_BASE && id < ID_MONITOR_BASE+64 {
+	if id >= ID_MONITOR_BASE && id < ID_RES_ORIGINAL {
 		selectMonitor(id - ID_MONITOR_BASE)
 		return
 	}
@@ -3629,6 +3619,7 @@ func onCommand(id int) {
 	case ID_COPY_CODE:
 		copyCode()
 	case ID_FILE_SEND:
+		messageBox.Call(state.hwnd, uintptr(unsafe.Pointer(utf16ptr("Dosya Gönder tıklandı — seçici açılıyor."))), uintptr(unsafe.Pointer(utf16ptr(appTitle))), 0x00000040)
 		if path, ok := chooseFile(); ok {
 			go sendFileToPeer(path)
 		}
