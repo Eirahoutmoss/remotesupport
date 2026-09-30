@@ -5,14 +5,12 @@ package main
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
-	"image/png"
 	"io"
 	"log"
 	"math"
@@ -41,7 +39,7 @@ import (
 )
 
 const (
-	appTitle            = "NexDesk"
+	appTitle            = "Remote Support"
 	defaultSignalingURL = ""
 	windowClass         = "RemoteSupportWindow"
 	viewerClass         = "RemoteSupportViewer"
@@ -78,96 +76,90 @@ const (
 	ID_CURTAIN        = 5012
 	ID_LOCKINPUT      = 5013
 	ID_SYSINFO        = 5014
-	ID_ANNOT          = 5015
-	ID_SHARE_LINK     = 5016
 	WM_APP_MONITORS   = 0x8001
 	WM_APP_IDLE       = 0x8002
 	WM_APP_IDLE_CLOSE = 0x8003
 	WM_APP_CURTAIN    = 0x8004
-	WM_APP_ANNOT      = 0x8005
 )
 
 var (
-	gdi32DLL          = syscall.NewLazyDLL("gdi32.dll")
-	comdlg32          = syscall.NewLazyDLL("comdlg32.dll")
-	user32            = syscall.NewLazyDLL("user32.dll")
-	kernel32          = syscall.NewLazyDLL("kernel32.dll")
-	shell32           = syscall.NewLazyDLL("shell32.dll")
-	shellExecuteW     = shell32.NewProc("ShellExecuteW")
-	registerClass     = user32.NewProc("RegisterClassExW")
-	createWindow      = user32.NewProc("CreateWindowExW")
-	defWindowProc     = user32.NewProc("DefWindowProcW")
-	showWindow        = user32.NewProc("ShowWindow")
-	setWindowPos      = user32.NewProc("SetWindowPos")
-	getWindowRect     = user32.NewProc("GetWindowRect")
-	getWindowLongPtr  = user32.NewProc("GetWindowLongPtrW")
-	setWindowLongPtr  = user32.NewProc("SetWindowLongPtrW")
-	updateWindow      = user32.NewProc("UpdateWindow")
-	getMessage        = user32.NewProc("GetMessageW")
-	translateMsg      = user32.NewProc("TranslateMessage")
-	dispatchMessage   = user32.NewProc("DispatchMessageW")
-	postQuit          = user32.NewProc("PostQuitMessage")
-	sendMessage       = user32.NewProc("SendMessageW")
-	postMessage       = user32.NewProc("PostMessageW")
-	setWindowText     = user32.NewProc("SetWindowTextW")
-	getWindowText     = user32.NewProc("GetWindowTextW")
-	destroyWindow     = user32.NewProc("DestroyWindow")
-	messageBox        = user32.NewProc("MessageBoxW")
-	getModule         = kernel32.NewProc("GetModuleHandleW")
-	globalMemStatus   = kernel32.NewProc("GlobalMemoryStatusEx")
-	getDiskFreeSpace  = kernel32.NewProc("GetDiskFreeSpaceExW")
-	loadCursor        = user32.NewProc("LoadCursorW")
-	openClipboard     = user32.NewProc("OpenClipboard")
-	emptyClipboard    = user32.NewProc("EmptyClipboard")
-	setClipboardData  = user32.NewProc("SetClipboardData")
-	closeClipboard    = user32.NewProc("CloseClipboard")
-	beginPaint        = user32.NewProc("BeginPaint")
-	endPaint          = user32.NewProc("EndPaint")
-	fillRect          = user32.NewProc("FillRect")
-	getClientRect     = user32.NewProc("GetClientRect")
-	getCursorPos      = user32.NewProc("GetCursorPos")
-	createPopupMenu   = user32.NewProc("CreatePopupMenu")
-	appendMenuW       = user32.NewProc("AppendMenuW")
-	trackPopupMenu    = user32.NewProc("TrackPopupMenu")
-	destroyMenu       = user32.NewProc("DestroyMenu")
-	setWinDisplayAff  = user32.NewProc("SetWindowDisplayAffinity")
-	blockInput        = user32.NewProc("BlockInput")
-	setLayeredWinAttr = user32.NewProc("SetLayeredWindowAttributes")
-	screenToClient    = user32.NewProc("ScreenToClient")
-	getSystemMetrics  = user32.NewProc("GetSystemMetrics")
-	sendInput         = user32.NewProc("SendInput")
-	setFocus          = user32.NewProc("SetFocus")
-	invalidateRect    = user32.NewProc("InvalidateRect")
-	registerClassEx   = user32.NewProc("RegisterClassExW")
-	stretchDIBits     = gdi32DLL.NewProc("StretchDIBits")
-	setStretchMode    = gdi32DLL.NewProc("SetStretchBltMode")
-	getStockObject    = gdi32DLL.NewProc("GetStockObject")
-	createPen         = gdi32DLL.NewProc("CreatePen")
-	moveToEx          = gdi32DLL.NewProc("MoveToEx")
-	lineTo            = gdi32DLL.NewProc("LineTo")
-	selectObject      = gdi32DLL.NewProc("SelectObject")
-	deleteObject      = gdi32DLL.NewProc("DeleteObject")
-	roundRect         = gdi32DLL.NewProc("RoundRect")
-	drawText          = user32.NewProc("DrawTextW")
-	mapVirtualKey     = user32.NewProc("MapVirtualKeyW")
-	createFont        = gdi32DLL.NewProc("CreateFontW")
-	createSolidBrush  = gdi32DLL.NewProc("CreateSolidBrush")
-	setTextColor      = gdi32DLL.NewProc("SetTextColor")
-	setBkColor        = gdi32DLL.NewProc("SetBkColor")
-	setBkMode         = gdi32DLL.NewProc("SetBkMode")
-	patBlt            = gdi32DLL.NewProc("PatBlt")
-	ellipse           = gdi32DLL.NewProc("Ellipse")
-	setCapture        = user32.NewProc("SetCapture")
-	releaseCapture    = user32.NewProc("ReleaseCapture")
-	globalAlloc       = kernel32.NewProc("GlobalAlloc")
-	globalLock        = kernel32.NewProc("GlobalLock")
-	globalUnlock      = kernel32.NewProc("GlobalUnlock")
-	getOpenFileName   = comdlg32.NewProc("GetOpenFileNameW")
-	isDialogMessage   = user32.NewProc("IsDialogMessageW")
-	commDlgError      = comdlg32.NewProc("CommDlgExtendedError")
-	messageBeep       = user32.NewProc("MessageBeep")
-	flashWindow       = user32.NewProc("FlashWindow")
-	callWindowProc    = user32.NewProc("CallWindowProcW")
+	gdi32DLL         = syscall.NewLazyDLL("gdi32.dll")
+	comdlg32         = syscall.NewLazyDLL("comdlg32.dll")
+	user32           = syscall.NewLazyDLL("user32.dll")
+	kernel32         = syscall.NewLazyDLL("kernel32.dll")
+	shell32          = syscall.NewLazyDLL("shell32.dll")
+	shellExecuteW    = shell32.NewProc("ShellExecuteW")
+	registerClass    = user32.NewProc("RegisterClassExW")
+	createWindow     = user32.NewProc("CreateWindowExW")
+	defWindowProc    = user32.NewProc("DefWindowProcW")
+	showWindow       = user32.NewProc("ShowWindow")
+	setWindowPos     = user32.NewProc("SetWindowPos")
+	getWindowRect    = user32.NewProc("GetWindowRect")
+	getWindowLongPtr = user32.NewProc("GetWindowLongPtrW")
+	setWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
+	updateWindow     = user32.NewProc("UpdateWindow")
+	getMessage       = user32.NewProc("GetMessageW")
+	translateMsg     = user32.NewProc("TranslateMessage")
+	dispatchMessage  = user32.NewProc("DispatchMessageW")
+	postQuit         = user32.NewProc("PostQuitMessage")
+	sendMessage      = user32.NewProc("SendMessageW")
+	postMessage      = user32.NewProc("PostMessageW")
+	setWindowText    = user32.NewProc("SetWindowTextW")
+	getWindowText    = user32.NewProc("GetWindowTextW")
+	destroyWindow    = user32.NewProc("DestroyWindow")
+	messageBox       = user32.NewProc("MessageBoxW")
+	getModule        = kernel32.NewProc("GetModuleHandleW")
+	globalMemStatus  = kernel32.NewProc("GlobalMemoryStatusEx")
+	getDiskFreeSpace = kernel32.NewProc("GetDiskFreeSpaceExW")
+	loadCursor       = user32.NewProc("LoadCursorW")
+	openClipboard    = user32.NewProc("OpenClipboard")
+	emptyClipboard   = user32.NewProc("EmptyClipboard")
+	setClipboardData = user32.NewProc("SetClipboardData")
+	closeClipboard   = user32.NewProc("CloseClipboard")
+	beginPaint       = user32.NewProc("BeginPaint")
+	endPaint         = user32.NewProc("EndPaint")
+	fillRect         = user32.NewProc("FillRect")
+	getClientRect    = user32.NewProc("GetClientRect")
+	getCursorPos     = user32.NewProc("GetCursorPos")
+	createPopupMenu  = user32.NewProc("CreatePopupMenu")
+	appendMenuW      = user32.NewProc("AppendMenuW")
+	trackPopupMenu   = user32.NewProc("TrackPopupMenu")
+	destroyMenu      = user32.NewProc("DestroyMenu")
+	setWinDisplayAff = user32.NewProc("SetWindowDisplayAffinity")
+	blockInput       = user32.NewProc("BlockInput")
+	screenToClient   = user32.NewProc("ScreenToClient")
+	getSystemMetrics = user32.NewProc("GetSystemMetrics")
+	sendInput        = user32.NewProc("SendInput")
+	setFocus         = user32.NewProc("SetFocus")
+	invalidateRect   = user32.NewProc("InvalidateRect")
+	registerClassEx  = user32.NewProc("RegisterClassExW")
+	stretchDIBits    = gdi32DLL.NewProc("StretchDIBits")
+	setStretchMode   = gdi32DLL.NewProc("SetStretchBltMode")
+	getStockObject   = gdi32DLL.NewProc("GetStockObject")
+	createPen        = gdi32DLL.NewProc("CreatePen")
+	selectObject     = gdi32DLL.NewProc("SelectObject")
+	deleteObject     = gdi32DLL.NewProc("DeleteObject")
+	roundRect        = gdi32DLL.NewProc("RoundRect")
+	drawText         = user32.NewProc("DrawTextW")
+	mapVirtualKey    = user32.NewProc("MapVirtualKeyW")
+	createFont       = gdi32DLL.NewProc("CreateFontW")
+	createSolidBrush = gdi32DLL.NewProc("CreateSolidBrush")
+	setTextColor     = gdi32DLL.NewProc("SetTextColor")
+	setBkColor       = gdi32DLL.NewProc("SetBkColor")
+	setBkMode        = gdi32DLL.NewProc("SetBkMode")
+	patBlt           = gdi32DLL.NewProc("PatBlt")
+	ellipse          = gdi32DLL.NewProc("Ellipse")
+	setCapture       = user32.NewProc("SetCapture")
+	releaseCapture   = user32.NewProc("ReleaseCapture")
+	globalAlloc      = kernel32.NewProc("GlobalAlloc")
+	globalLock       = kernel32.NewProc("GlobalLock")
+	globalUnlock     = kernel32.NewProc("GlobalUnlock")
+	getOpenFileName  = comdlg32.NewProc("GetOpenFileNameW")
+	isDialogMessage  = user32.NewProc("IsDialogMessageW")
+	commDlgError     = comdlg32.NewProc("CommDlgExtendedError")
+	messageBeep      = user32.NewProc("MessageBeep")
+	flashWindow      = user32.NewProc("FlashWindow")
+	callWindowProc   = user32.NewProc("CallWindowProcW")
 )
 
 type point struct{ X, Y int32 }
@@ -265,7 +257,6 @@ type windowState struct {
 	settingsTurnPass   uintptr
 	stayOpen           uintptr
 	actionsBtn         uintptr
-	shareLink          uintptr
 	header             uintptr
 	subtitle           uintptr
 	statusText         string
@@ -274,7 +265,6 @@ type windowState struct {
 	sig    *clientsignaling.Client
 	peer   *webrtcpeer.Peer
 	cancel context.CancelFunc
-	ctx    context.Context
 }
 
 var state windowState
@@ -513,7 +503,7 @@ func startSessionStats(peer *webrtcpeer.Peer) {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			if sessionStartUnix.Load() == 0 || peerDead(peer) {
+			if sessionStartUnix.Load() == 0 {
 				return
 			}
 			now := framesRecv.Load()
@@ -1156,22 +1146,12 @@ func viewerWndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 		setCapture.Call(hwnd)
 		mx := int(int16(uint16(lParam & 0xffff)))
 		my := int(int16(uint16(lParam >> 16)))
-		if annotateMode.Load() {
-			if ax, ay, ok := normalizedViewerPoint(mx, my); ok {
-				annotLastX, annotLastY, annotDrawing = ax, ay, true
-			}
-			return 0
-		}
 		sendRemoteMouse("down", mx, my, 0, 0)
 		return 0
 	case 0x0202: // WM_LBUTTONUP
 		releaseCapture.Call()
 		mx := int(int16(uint16(lParam & 0xffff)))
 		my := int(int16(uint16(lParam >> 16)))
-		if annotateMode.Load() {
-			annotDrawing = false
-			return 0
-		}
 		sendRemoteMouse("up", mx, my, 0, 0)
 		return 0
 	case 0x0204: // WM_RBUTTONDOWN
@@ -1249,15 +1229,6 @@ func viewerWndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 	case 0x0200: // WM_MOUSEMOVE
 		mx := int(int16(uint16(lParam & 0xffff)))
 		my := int(int16(uint16(lParam >> 16)))
-		if annotateMode.Load() {
-			if annotDrawing {
-				if ax, ay, ok := normalizedViewerPoint(mx, my); ok {
-					sendAnnot(annotLastX, annotLastY, ax, ay)
-					annotLastX, annotLastY = ax, ay
-				}
-			}
-			return 0
-		}
 
 		// When panning the viewer, the mouse event belongs to the local viewer.
 		// Do not forward it to the remote machine, otherwise the remote cursor
@@ -1519,24 +1490,6 @@ func handleRemoteInput(peer *webrtcpeer.Peer, raw string) {
 		setStatus("● Yerel giriş kilidi açıldı.")
 		return
 	}
-	if strings.HasPrefix(raw, "ANNOT:") {
-		var a1, b1, c1, d1 float64
-		if n, _ := fmt.Sscanf(strings.TrimPrefix(raw, "ANNOT:"), "%f,%f,%f,%f", &a1, &b1, &c1, &d1); n == 4 {
-			annotMu.Lock()
-			annotPending = append(annotPending, annotSegN{a1, b1, c1, d1})
-			annotMu.Unlock()
-			if state.hwnd != 0 {
-				postMessage.Call(state.hwnd, WM_APP_ANNOT, 0, 0)
-			}
-		}
-		return
-	}
-	if raw == "ANNOT_CLEAR" {
-		if state.hwnd != 0 {
-			postMessage.Call(state.hwnd, WM_APP_ANNOT, 1, 0)
-		}
-		return
-	}
 	if raw == "SYSINFO_REQ" {
 		if peer != nil {
 			_ = peer.SendControlText("SYSINFO:" + gatherSysInfo())
@@ -1782,7 +1735,7 @@ func chooseFile() (string, bool) {
 		code, _, _ := commDlgError.Call()
 		if code != 0 {
 			msg := utf16ptr(fmt.Sprintf("Dosya seçici açılamadı (hata kodu %d).", code))
-			title := utf16ptr(brandName())
+			title := utf16ptr(appTitle)
 			messageBox.Call(state.hwnd, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(title)), 0x00000010)
 		}
 		return "", false
@@ -1960,7 +1913,7 @@ func startEmbeddedSignaling() {
 	ln, err := net.Listen("tcp", "0.0.0.0:8091")
 	if err != nil {
 		log.Printf("Embedded signaling could not bind :8091: %v", err)
-		setStatus("● 8091 portu meşgul: açık/eski bir NexDesk örneği olabilir. Onu kapatıp yeniden başlatın.")
+		setStatus("● 8091 portu meşgul: açık/eski bir RemoteSupport örneği olabilir. Onu kapatıp yeniden başlatın.")
 		return
 	}
 	s := server.NewServer()
@@ -2215,7 +2168,6 @@ func layoutUI() {
 	hide(state.chatSend)
 	hide(state.stayOpen)
 	hide(state.actionsBtn)
-	hide(state.shareLink)
 
 	if connected && !fullscreen.Load() {
 		// Toolbar action buttons sit on the painted toolbar surface (y≈104).
@@ -2301,7 +2253,6 @@ func layoutUI() {
 		hide(state.chatSend)
 		moveControl(state.codeLabel, 214, 344, 560, 86, true)
 		moveControl(state.copy, 784, 356, 158, 62, true)
-		moveControl(state.shareLink, 784, 426, 158, 40, true)
 		moveControl(state.remoteEdit, 178, 335, 782, 58, false)
 		moveControl(state.back, contentX, 566, 140, 46, true)
 		moveControl(state.action, contentX+156, 566, 260, 46, true)
@@ -2751,13 +2702,7 @@ func paintShell(hdc uintptr) {
 		paintPageHeader(hdc, "Destek Al", "Bu kodu destek verecek kişiye iletin.")
 		paintText(hdc, "BAĞLANTI KODUNUZ", contentX, 300, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
 		paintCard(hdc, contentX, 322, 782, 128, uiEditColor, uiBorderColor, 16)
-		if code := getActiveCode(); code != "" && code != "------" {
-			drawQR(hdc, buildJoinLink(code), contentX, 478, 150)
-			paintText(hdc, "KAREKODU TARATIN VEYA LİNKİ PAYLAŞIN", contentX+166, 486, 470, 18, uiLabelFont, uiAccentColor, txVLeft)
-			paintText(hdc, "Karşı taraf telefon kamerasıyla tarayabilir ya da linki uygulamaya yapıştırabilir.", contentX+166, 510, 470, 44, uiBodyFont, uiMutedColor, txWrap)
-		} else {
-			paintText(hdc, "Kod oluşturulduğunda burada görünür ve otomatik paylaşılır.", contentX, 470, 782, 20, uiBodyFont, uiFaintColor, txVLeft)
-		}
+		paintText(hdc, "Kod oluşturulduğunda burada görünür ve otomatik paylaşılır.", contentX, 470, 782, 20, uiBodyFont, uiFaintColor, txVLeft)
 		if exp := codeExpiryUnix.Load(); exp > 0 {
 			rem := exp - time.Now().Unix()
 			if rem < 0 {
@@ -2772,7 +2717,7 @@ func paintShell(hdc uintptr) {
 			paintText(hdc, label, contentX, 300, 782, 18, uiLabelFont, ccol, txVRight)
 		}
 	case mode == 2:
-		paintPageHeader(hdc, "Destek Ver", "Karşı bilgisayarın kodunu ya da nexdesk:// bağlantısını girin.")
+		paintPageHeader(hdc, "Destek Ver", "Karşı bilgisayarda görünen 6 haneli kodu girin.")
 		paintText(hdc, "BAĞLANTI KODU", contentX, 326, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
 		paintText(hdc, "Kod yalnızca karşı tarafın onayıyla bağlantı kurar.", contentX, 436, 782, 20, uiBodyFont, uiFaintColor, txVLeft)
 	case mode == 10:
@@ -2790,12 +2735,13 @@ func paintTopBar(hdc uintptr, w int, connected bool, status string) {
 	fillBand(hdc, 0, 0, w, headerH, rgb(uiBarColor))
 	fillBand(hdc, 0, headerH-1, w, 1, rgb(uiBorderColor))
 
-	// Embedded product logo on its own plate, then the wordmark + tagline.
-	paintGlow(hdc, 20, 15, 56, 56, brandAccent(), 14)
-	drawLogoPlate(hdc, 20, 15, 56, 56, 14)
+	// Logo tile with a soft glow.
+	paintGlow(hdc, 22, 19, 48, 48, uiAccentColor, 14)
+	paintRoundPanel(hdc, 22, 19, 48, 48, uiAccentColor, 14)
+	paintText(hdc, "▣", 22, 19, 48, 48, uiHeaderFont, uiTextColor, txMid)
 
-	paintText(hdc, strings.ToUpper(brandName()), 88, 16, 430, 26, uiBrandFont, uiTextColor, txVLeft)
-	paintText(hdc, brandTagline(), 89, 46, 470, 22, uiBodyFont, uiMutedColor, txVLeft)
+	paintText(hdc, "SECURE REMOTE DESKTOP", 84, 16, 430, 26, uiBrandFont, uiTextColor, txVLeft)
+	paintText(hdc, "Güvenli  •  Hızlı  •  Kolay  •  Her Yerden Destek", 85, 46, 470, 22, uiBodyFont, uiMutedColor, txVLeft)
 
 	if connected {
 		// Session identity + live indicator, right-aligned (leaves room for the
@@ -2875,8 +2821,8 @@ func paintSidebar(hdc uintptr, h int) {
 		iy += 52
 	}
 
-	paintText(hdc, strings.ToUpper(brandName()), 22, h-footerH-44, navW-30, 16, uiLabelFont, uiFaintColor, txVLeft)
-	paintText(hdc, "Sürüm 1.1.0", 22, h-footerH-26, navW-30, 16, uiSmallFont, uiFaintColor, txVLeft)
+	paintText(hdc, "REMOTE SUPPORT", 22, h-footerH-44, navW-30, 16, uiLabelFont, uiFaintColor, txVLeft)
+	paintText(hdc, "Sürüm 1.0.0", 22, h-footerH-26, navW-30, 16, uiSmallFont, uiFaintColor, txVLeft)
 }
 
 func paintPageHeader(hdc uintptr, title, subtitle string) {
@@ -3021,18 +2967,19 @@ func paintSettings(hdc uintptr, w int) {
 }
 
 func paintAbout(hdc uintptr, w int) {
-	paintPageHeader(hdc, "Hakkında", brandName()+" hakkında bilgi.")
+	paintPageHeader(hdc, "Hakkında", "Remote Support hakkında bilgi.")
 	cw := w - contentX - gutter
 	paintCard(hdc, contentX, 190, cw, 316, uiPanelColor, uiBorderColor, 16)
-	paintGlow(hdc, contentX+30, 214, 96, 96, brandAccent(), 20)
-	drawLogoPlate(hdc, contentX+30, 214, 96, 96, 18)
-	paintText(hdc, brandName(), contentX+150, 224, 460, 34, uiHeaderFont, uiTextColor, txVLeft)
-	paintText(hdc, brandTagline(), contentX+150, 264, 520, 24, uiBodyFont, uiMutedColor, txVLeft)
-	fillBand(hdc, contentX+30, 330, cw-60, 1, rgb(uiBorderColor))
-	paintText(hdc, "PROGRAM YAZARI", contentX+30, 346, 240, 18, uiLabelFont, brandAccent(), txVLeft)
-	paintText(hdc, brandAuthor(), contentX+30, 370, 320, 30, uiSubtitleFont, uiTextColor, txVLeft)
-	paintText(hdc, "Sürüm 1.1.0     •     © 2026", contentX+30, 420, 420, 22, uiBodyFont, uiMutedColor, txVLeft)
-	paintText(hdc, "Uçtan uca şifreleme  •  Çoklu monitör  •  Ekran/dosya aktarımı  •  İşaretleme  •  Otomatik yeniden bağlanma", contentX+30, 452, cw-60, 22, uiBodyFont, uiMutedColor, txVLeft)
+	paintGlow(hdc, contentX+30, 222, 72, 72, uiAccentColor, 18)
+	paintRoundPanel(hdc, contentX+30, 222, 72, 72, uiAccentColor, 18)
+	paintText(hdc, "▣", contentX+30, 222, 72, 72, uiHeaderFont, uiTextColor, txMid)
+	paintText(hdc, "Remote Support", contentX+126, 224, 460, 32, uiHeaderFont, uiTextColor, txVLeft)
+	paintText(hdc, "Güvenli uzaktan masaüstü ve destek uygulaması.", contentX+126, 262, 520, 24, uiBodyFont, uiMutedColor, txVLeft)
+	fillBand(hdc, contentX+30, 318, cw-60, 1, rgb(uiBorderColor))
+	paintText(hdc, "PROGRAM YAZARI", contentX+30, 336, 240, 18, uiLabelFont, uiAccentColor, txVLeft)
+	paintText(hdc, "Hasan Güler", contentX+30, 360, 320, 30, uiSubtitleFont, uiTextColor, txVLeft)
+	paintText(hdc, "Sürüm 1.0.0     •     © 2026", contentX+30, 414, 420, 22, uiBodyFont, uiMutedColor, txVLeft)
+	paintText(hdc, "Uçtan uca şifreleme  •  Çoklu monitör  •  Ekran aktarımı  •  Dosya aktarımı", contentX+30, 452, cw-60, 22, uiBodyFont, uiMutedColor, txVLeft)
 }
 
 func paintFooter(hdc uintptr, w, h int, connected bool) {
@@ -3046,7 +2993,7 @@ func paintFooter(hdc uintptr, w, h int, connected bool) {
 	paintDot(hdc, 30, footerY+footerH/2, 5, dotCol)
 	label := "Bağlantı Durumu: " + map[bool]string{true: "Aktif", false: "Hazır"}[connected]
 	paintText(hdc, label, 44, footerY, 260, footerH, uiBodyFont, uiTextColor, txVLeft)
-	paintText(hdc, "Program Yazarı: "+brandAuthor()+"  •  © 2026", w-360, footerY, 336, footerH, uiBodyFont, uiMutedColor, txVRight)
+	paintText(hdc, "Program Yazarı: Hasan Güler  •  © 2026", w-320, footerY, 296, footerH, uiBodyFont, uiMutedColor, txVRight)
 }
 
 func createControl(parent uintptr, class, text string, style uint32, x, y, w, h, id int) uintptr {
@@ -3067,7 +3014,7 @@ func createControl(parent uintptr, class, text string, style uint32, x, y, w, h,
 	case "EDIT":
 		setControlFont(r, uiEditFont)
 	case "STATIC":
-		if text == appTitle {
+		if text == "Remote Support" {
 			setControlFont(r, uiHeaderFont)
 		} else if text == "Güvenli uzaktan destek" {
 			setControlFont(r, uiSubtitleFont)
@@ -3154,13 +3101,10 @@ func giveMode() {
 	show(state.back)
 	setText(state.action, "BAĞLAN")
 	layoutUI()
-	setStatus("Karşı bilgisayarın kodunu ya da paylaşılan bağlantıyı girin.")
+	setStatus("Karşı bilgisayarın 6 haneli kodunu girin.")
 }
 
 func startTarget() {
-	userStopped.Store(false)
-	everConnected.Store(false)
-	reconnecting.Store(false)
 	captureMaxHeight.Store(0)
 	activeTargetMonitorMu.Lock()
 	activeTargetMonitor = capture.Monitor{}
@@ -3173,7 +3117,6 @@ func startTarget() {
 	ctx, cancel := context.WithCancel(context.Background())
 	state.mu.Lock()
 	state.cancel = cancel
-	state.ctx = ctx
 	state.mu.Unlock()
 
 	c, err := clientsignaling.Dial(ctx, signalingEndpoint())
@@ -3264,15 +3207,12 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 			state.mu.Lock()
 			p := state.peer
 			state.mu.Unlock()
+			if p == nil {
+				continue
+			}
 			sig := webrtcpeer.Signal{Kind: msg.Kind, Payload: msg.Payload}
 			switch sig.Kind {
 			case "offer":
-				if p == nil || peerDead(p) {
-					p = targetRebuild(ctx, c)
-					if p == nil {
-						continue
-					}
-				}
 				answer, err := p.AcceptOffer(ctx, sig)
 				if err != nil {
 					setStatus("● Teklif işlenemedi: " + err.Error())
@@ -3283,9 +3223,6 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 					return
 				}
 			case "candidate":
-				if p == nil {
-					continue
-				}
 				if err := p.AddSignal(sig); err != nil {
 					setStatus("● ICE adayı işlenemedi: " + err.Error())
 				}
@@ -3300,9 +3237,6 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 func startOperator(code string) {
 	defer logCrash("startOperator")
 	setActiveCode(code)
-	userStopped.Store(false)
-	everConnected.Store(false)
-	reconnecting.Store(false)
 	activeTargetMonitorMu.Lock()
 	activeTargetMonitor = capture.Monitor{}
 	activeTargetMonitorOK = false
@@ -3314,14 +3248,9 @@ func startOperator(code string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	state.mu.Lock()
 	state.cancel = cancel
-	state.ctx = ctx
 	state.mu.Unlock()
 
-	ep := signalingEndpoint()
-	if ov := getOpEndpoint(); ov != "" {
-		ep = ov
-	}
-	c, err := clientsignaling.Dial(ctx, ep)
+	c, err := clientsignaling.Dial(ctx, signalingEndpoint())
 	if err != nil {
 		setStatus("● Sunucuya bağlanılamadı: " + err.Error())
 		return
@@ -3443,17 +3372,10 @@ func watchPeer(peer *webrtcpeer.Peer) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
-	announced := false
 	for range ticker.C {
 		st := peer.ConnectionState()
 		switch st {
 		case webrtc.PeerConnectionStateConnected:
-			if announced {
-				continue
-			}
-			announced = true
-			everConnected.Store(true)
-			reconnecting.Store(false)
 			if host, err := os.Hostname(); err == nil {
 				_ = peer.SendControlText("HELLO:" + host)
 			}
@@ -3474,19 +3396,16 @@ func watchPeer(peer *webrtcpeer.Peer) {
 			auditLog("Bağlandı: " + recRole)
 			setStatus("● BAĞLANDI  •  Güvenli WebRTC bağlantısı aktif")
 			_ = peer.SendPing()
+			return
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
-			if announced {
-				onPeerDropped(state.mode)
-			} else {
-				setStatus("● WebRTC bağlantısı kapandı: " + st.String())
-			}
+			setStatus("● WebRTC bağlantısı kapandı: " + st.String())
 			return
 		}
 	}
 }
 
 func askApproval(code string) bool {
-	title := utf16ptr(brandName())
+	title := utf16ptr(appTitle)
 	text := utf16ptr(fmt.Sprintf(
 		"Bir bilgisayar bu destek koduyla bağlanmak istiyor.\r\n\r\nKod: %s\r\n\r\nBağlantıya izin verilsin mi?",
 		formatCode(code),
@@ -3914,581 +3833,6 @@ func clearPrivacy() {
 	remoteLockOn.Store(false)
 }
 
-// ---- Screen annotation (operator marks the agent screen) ----
-type annotSegN struct{ x1, y1, x2, y2 float64 }
-type annotSeg struct {
-	x1, y1, x2, y2 int
-	at             time.Time
-}
-
-var annotateMode atomic.Bool
-var annotDrawing bool
-var annotLastX, annotLastY float64
-var annotHwnd uintptr
-var annotMu sync.Mutex
-var annotStrokes []annotSeg
-var annotPending []annotSegN
-var annotFadeOnce sync.Once
-
-func sendAnnot(x1, y1, x2, y2 float64) {
-	state.mu.Lock()
-	pr := state.peer
-	state.mu.Unlock()
-	if pr != nil {
-		_ = pr.SendControlText(fmt.Sprintf("ANNOT:%.4f,%.4f,%.4f,%.4f", x1, y1, x2, y2))
-	}
-}
-
-func annotProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
-	if m == 0x000F { // WM_PAINT
-		var ps paintStruct
-		hdc, _, _ := beginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-		if hdc != 0 {
-			var rc rect
-			getClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
-			bb, _, _ := getStockObject.Call(4)
-			fillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), bb) // black = colorkey = transparent
-			pen, _, _ := createPen.Call(0, 4, rgb(0xFF3B30))
-			old, _, _ := selectObject.Call(hdc, pen)
-			annotMu.Lock()
-			strokes := append([]annotSeg(nil), annotStrokes...)
-			annotMu.Unlock()
-			for _, sg := range strokes {
-				moveToEx.Call(hdc, uintptr(sg.x1), uintptr(sg.y1), 0)
-				lineTo.Call(hdc, uintptr(sg.x2), uintptr(sg.y2))
-			}
-			selectObject.Call(hdc, old)
-			deleteObject.Call(pen)
-			endPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-		}
-		return 0
-	}
-	r, _, _ := defWindowProc.Call(hwnd, uintptr(m), wParam, lParam)
-	return r
-}
-
-func ensureAnnotOverlay() {
-	if annotHwnd != 0 {
-		return
-	}
-	class := utf16ptr("RSAnnot")
-	bb, _, _ := getStockObject.Call(4)
-	wc := wndclassex{CbSize: uint32(unsafe.Sizeof(wndclassex{})), LpfnWndProc: syscall.NewCallback(annotProc), HInstance: moduleHandle(), HbrBackground: bb, LpszClassName: class}
-	registerClassEx.Call(uintptr(unsafe.Pointer(&wc)))
-	x := systemMetric(76)
-	y := systemMetric(77)
-	w := systemMetric(78)
-	h := systemMetric(79)
-	ex := uintptr(0x80000 | 0x20 | 0x8 | 0x80 | 0x08000000) // LAYERED|TRANSPARENT|TOPMOST|TOOLWINDOW|NOACTIVATE
-	hwnd, _, _ := createWindow.Call(ex, uintptr(unsafe.Pointer(class)), 0, 0x80000000, uintptr(x), uintptr(y), uintptr(w), uintptr(h), 0, 0, moduleHandle(), 0)
-	annotHwnd = hwnd
-	if hwnd != 0 {
-		setLayeredWinAttr.Call(hwnd, 0x00000000, 0, 0x1) // LWA_COLORKEY: black transparent
-	}
-}
-
-func drainAnnot() {
-	mon, ok := remoteTargetMonitor()
-	if !ok {
-		annotMu.Lock()
-		annotPending = nil
-		annotMu.Unlock()
-		return
-	}
-	vl := int(systemMetric(76))
-	vt := int(systemMetric(77))
-	now := time.Now()
-	annotMu.Lock()
-	pend := annotPending
-	annotPending = nil
-	for _, pp := range pend {
-		annotStrokes = append(annotStrokes, annotSeg{
-			x1: mon.X + int(pp.x1*float64(mon.Width)) - vl, y1: mon.Y + int(pp.y1*float64(mon.Height)) - vt,
-			x2: mon.X + int(pp.x2*float64(mon.Width)) - vl, y2: mon.Y + int(pp.y2*float64(mon.Height)) - vt, at: now})
-	}
-	if len(annotStrokes) > 2000 {
-		annotStrokes = annotStrokes[len(annotStrokes)-2000:]
-	}
-	annotMu.Unlock()
-	ensureAnnotOverlay()
-	if annotHwnd != 0 {
-		showWindow.Call(annotHwnd, 8)
-		invalidateRect.Call(annotHwnd, 0, 1)
-	}
-	startAnnotFade()
-}
-
-func clearAnnot() {
-	annotMu.Lock()
-	annotStrokes = nil
-	annotMu.Unlock()
-	if annotHwnd != 0 {
-		invalidateRect.Call(annotHwnd, 0, 1)
-	}
-}
-
-func startAnnotFade() {
-	annotFadeOnce.Do(func() {
-		go func() {
-			defer logCrash("annotFade")
-			t := time.NewTicker(500 * time.Millisecond)
-			defer t.Stop()
-			for range t.C {
-				annotMu.Lock()
-				before := len(annotStrokes)
-				cutoff := time.Now().Add(-4 * time.Second)
-				kept := annotStrokes[:0]
-				for _, sg := range annotStrokes {
-					if sg.at.After(cutoff) {
-						kept = append(kept, sg)
-					}
-				}
-				annotStrokes = kept
-				changed := len(annotStrokes) != before
-				annotMu.Unlock()
-				if changed && annotHwnd != 0 {
-					invalidateRect.Call(annotHwnd, 0, 1)
-				}
-			}
-		}()
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Branding (white-label) + embedded logo
-// ---------------------------------------------------------------------------
-
-//go:embed assets/logo.png
-var logoPNG []byte
-
-type brandCfg struct {
-	Name     string `json:"name"`
-	Tagline  string `json:"tagline"`
-	Author   string `json:"author"`
-	Accent   string `json:"accent"`
-	LogoPath string `json:"logo_path"`
-}
-
-var (
-	brandMu       sync.RWMutex
-	brandNameV    = "NexDesk"
-	brandTaglineV = "Uzaktan destek, daha kolay"
-	brandAuthorV  = "Hasan Güler"
-	brandAccentV  = uint32(uiAccentColor)
-	brandLogoPath string
-)
-
-func brandName() string    { brandMu.RLock(); defer brandMu.RUnlock(); return brandNameV }
-func brandTagline() string { brandMu.RLock(); defer brandMu.RUnlock(); return brandTaglineV }
-func brandAuthor() string  { brandMu.RLock(); defer brandMu.RUnlock(); return brandAuthorV }
-func brandAccent() uint32  { brandMu.RLock(); defer brandMu.RUnlock(); return brandAccentV }
-
-func brandingPath() string {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		base = os.TempDir()
-	}
-	return filepath.Join(base, "RemoteSupport", "branding.json")
-}
-
-// loadBranding lets an integrator white-label the app by dropping a branding.json
-// next to the settings (name, tagline, author, accent hex, optional logo path).
-func loadBranding() {
-	data, err := os.ReadFile(brandingPath())
-	if err != nil {
-		return
-	}
-	var b brandCfg
-	if json.Unmarshal(data, &b) != nil {
-		return
-	}
-	brandMu.Lock()
-	if strings.TrimSpace(b.Name) != "" {
-		brandNameV = strings.TrimSpace(b.Name)
-	}
-	if strings.TrimSpace(b.Tagline) != "" {
-		brandTaglineV = strings.TrimSpace(b.Tagline)
-	}
-	if strings.TrimSpace(b.Author) != "" {
-		brandAuthorV = strings.TrimSpace(b.Author)
-	}
-	if c, ok := parseHexColor(b.Accent); ok {
-		brandAccentV = c
-	}
-	brandLogoPath = strings.TrimSpace(b.LogoPath)
-	brandMu.Unlock()
-}
-
-func parseHexColor(s string) (uint32, bool) {
-	s = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(s), "#"))
-	if len(s) != 6 {
-		return 0, false
-	}
-	var v uint32
-	for _, r := range s {
-		var d uint32
-		switch {
-		case r >= '0' && r <= '9':
-			d = uint32(r - '0')
-		case r >= 'a' && r <= 'f':
-			d = uint32(r-'a') + 10
-		case r >= 'A' && r <= 'F':
-			d = uint32(r-'A') + 10
-		default:
-			return 0, false
-		}
-		v = v<<4 | d
-	}
-	return v, true
-}
-
-var (
-	logoOnce  sync.Once
-	logoPix   []byte
-	logoW     int
-	logoH     int
-	logoPlate uint32 = 0x1D1C1D
-)
-
-func loadLogo() {
-	logoOnce.Do(func() {
-		var raw []byte
-		brandMu.RLock()
-		lp := brandLogoPath
-		brandMu.RUnlock()
-		if lp != "" {
-			if d, err := os.ReadFile(lp); err == nil {
-				raw = d
-			}
-		}
-		if raw == nil {
-			raw = logoPNG
-		}
-		img, err := png.Decode(bytes.NewReader(raw))
-		if err != nil {
-			return
-		}
-		b := img.Bounds()
-		w, h := b.Dx(), b.Dy()
-		if w <= 0 || h <= 0 {
-			return
-		}
-		pix := make([]byte, w*h*4)
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
-				r, g, bl, _ := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
-				i := (y*w + x) * 4
-				pix[i+0] = byte(bl >> 8)
-				pix[i+1] = byte(g >> 8)
-				pix[i+2] = byte(r >> 8)
-				pix[i+3] = 0
-			}
-		}
-		cr, cg, cb, _ := img.At(b.Min.X+2, b.Min.Y+2).RGBA()
-		logoPlate = (uint32(cr>>8) << 16) | (uint32(cg>>8) << 8) | uint32(cb>>8)
-		logoPix, logoW, logoH = pix, w, h
-	})
-}
-
-// drawLogoPlate paints a rounded plate the colour of the logo's own background
-// and blits the logo aspect-fit + centred inside it, so any letterbox area blends
-// seamlessly regardless of the surface behind it.
-func drawLogoPlate(hdc uintptr, x, y, w, h, radius int) {
-	loadLogo()
-	paintRoundPanel(hdc, x, y, w, h, logoPlate, radius)
-	if len(logoPix) == 0 || logoW == 0 || logoH == 0 {
-		return
-	}
-	pad := 6
-	aw, ah := w-pad*2, h-pad*2
-	if aw <= 0 || ah <= 0 {
-		return
-	}
-	dw, dh := aw, ah
-	if logoW*ah > logoH*aw {
-		dh = logoH * aw / logoW
-	} else {
-		dw = logoW * ah / logoH
-	}
-	dx := x + pad + (aw-dw)/2
-	dy := y + pad + (ah-dh)/2
-	bi := bitmapInfo{BmiHeader: bitmapInfoHeader{
-		BiSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
-		BiWidth:       int32(logoW),
-		BiHeight:      -int32(logoH),
-		BiPlanes:      1,
-		BiBitCount:    32,
-		BiCompression: 0,
-	}}
-	setStretchMode.Call(hdc, 4) // HALFTONE: smooth downscale
-	stretchDIBits.Call(hdc,
-		uintptr(dx), uintptr(dy), uintptr(dw), uintptr(dh),
-		0, 0, uintptr(logoW), uintptr(logoH),
-		uintptr(unsafe.Pointer(&logoPix[0])), uintptr(unsafe.Pointer(&bi)), 0, 0x00CC0020)
-}
-
-// ---------------------------------------------------------------------------
-// Join link + QR code
-// ---------------------------------------------------------------------------
-
-func primaryLANIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-	if ua, ok := conn.LocalAddr().(*net.UDPAddr); ok {
-		return ua.IP.String()
-	}
-	return ""
-}
-
-// shareWSURL returns the ws:// endpoint an operator should dial to reach THIS
-// target: the configured internet signaling if set, else this machine's LAN
-// address on the embedded signaling port.
-func shareWSURL() string {
-	cfg := currentSettings()
-	if v := strings.TrimSpace(cfg.SignalingURL); v != "" {
-		return v
-	}
-	if ip := primaryLANIP(); ip != "" {
-		return "ws://" + ip + ":8091/v1/ws"
-	}
-	return ""
-}
-
-var linkCacheMu sync.Mutex
-var linkCacheCode, linkCacheVal string
-
-func buildJoinLink(code string) string {
-	code = strings.ReplaceAll(strings.TrimSpace(code), " ", "")
-	linkCacheMu.Lock()
-	defer linkCacheMu.Unlock()
-	if code == linkCacheCode && linkCacheVal != "" {
-		return linkCacheVal
-	}
-	v := url.Values{}
-	if ws := shareWSURL(); ws != "" {
-		v.Set("ws", ws)
-	}
-	v.Set("code", code)
-	linkCacheCode = code
-	linkCacheVal = "nexdesk://join?" + v.Encode()
-	return linkCacheVal
-}
-
-// parseJoinInput accepts either a raw numeric code or a nexdesk://join link and
-// returns the code plus an optional ws endpoint override.
-func parseJoinInput(s string) (code, ws string) {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(strings.ToLower(s), "nexdesk://") {
-		if u, err := url.Parse(s); err == nil {
-			q := u.Query()
-			return normalizeCode(q.Get("code")), strings.TrimSpace(q.Get("ws"))
-		}
-	}
-	return normalizeCode(s), ""
-}
-
-var opEndpointMu sync.Mutex
-var opEndpointOverride string
-
-func setOpEndpoint(v string) { opEndpointMu.Lock(); opEndpointOverride = v; opEndpointMu.Unlock() }
-func getOpEndpoint() string {
-	opEndpointMu.Lock()
-	defer opEndpointMu.Unlock()
-	return opEndpointOverride
-}
-
-var (
-	qrCacheMu  sync.Mutex
-	qrCacheKey string
-	qrCacheMat [][]bool
-)
-
-func qrMatrix(text string) [][]bool {
-	qrCacheMu.Lock()
-	defer qrCacheMu.Unlock()
-	if text == qrCacheKey && qrCacheMat != nil {
-		return qrCacheMat
-	}
-	m, _ := qrEncode(text, 0)
-	qrCacheKey = text
-	qrCacheMat = m
-	return m
-}
-
-// drawQR paints a cached QR of text into a size×size box at (x,y). A 1px-per-
-// module DIB is scaled up with a nearest-neighbour StretchBlt for crisp squares.
-func drawQR(hdc uintptr, text string, x, y, size int) {
-	mat := qrMatrix(text)
-	n := len(mat)
-	if n == 0 {
-		return
-	}
-	quiet := 3
-	dim := n + quiet*2
-	paintRoundPanel(hdc, x, y, size, size, 0xFFFFFF, 8)
-	pix := make([]byte, dim*dim*4)
-	for i := range pix {
-		pix[i] = 0xFF
-	}
-	for r := 0; r < n; r++ {
-		for c := 0; c < n; c++ {
-			if mat[r][c] {
-				i := ((r+quiet)*dim + (c + quiet)) * 4
-				pix[i+0], pix[i+1], pix[i+2] = 0, 0, 0
-			}
-		}
-	}
-	inner := size - 12
-	bi := bitmapInfo{BmiHeader: bitmapInfoHeader{
-		BiSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
-		BiWidth:       int32(dim),
-		BiHeight:      -int32(dim),
-		BiPlanes:      1,
-		BiBitCount:    32,
-		BiCompression: 0,
-	}}
-	setStretchMode.Call(hdc, 3) // COLORONCOLOR: crisp modules
-	stretchDIBits.Call(hdc,
-		uintptr(x+6), uintptr(y+6), uintptr(inner), uintptr(inner),
-		0, 0, uintptr(dim), uintptr(dim),
-		uintptr(unsafe.Pointer(&pix[0])), uintptr(unsafe.Pointer(&bi)), 0, 0x00CC0020)
-}
-
-// ---------------------------------------------------------------------------
-// Auto-reconnect
-// ---------------------------------------------------------------------------
-
-var (
-	userStopped   atomic.Bool
-	everConnected atomic.Bool
-	reconnecting  atomic.Bool
-)
-
-func peerDead(p *webrtcpeer.Peer) bool {
-	switch p.ConnectionState() {
-	case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
-		return true
-	}
-	return false
-}
-
-func onPeerDropped(role int) {
-	if userStopped.Load() || !everConnected.Load() {
-		return
-	}
-	if role == 2 {
-		setStatus("● Bağlantı koptu — otomatik yeniden bağlanılıyor…")
-		go operatorReconnectLoop()
-	} else {
-		setStatus("● Bağlantı koptu — karşı tarafın yeniden bağlanması bekleniyor…")
-	}
-}
-
-// operatorNegotiate builds a fresh peer and offer over the still-open signaling
-// channel. Used both for the initial connect's retry and for auto-reconnect.
-func operatorNegotiate(ctx context.Context, c *clientsignaling.Client) error {
-	peer, err := newPeer(ctx, c, true)
-	if err != nil {
-		return err
-	}
-	peer.SetScreenHandler(setViewerFrame)
-	peer.SetControlHandler(func(msg string) { defer logCrash("control"); handleRemoteInput(peer, msg) })
-	peer.SetFileHandler(func(d []byte) { defer logCrash("file"); handleRemoteFile(d) })
-	if err := peer.CreateControl(); err != nil {
-		return err
-	}
-	if err := peer.CreateFile(); err != nil {
-		return err
-	}
-	if err := peer.CreateScreen(); err != nil {
-		return err
-	}
-	offer, err := peer.Offer(ctx)
-	if err != nil {
-		return err
-	}
-	state.mu.Lock()
-	old := state.peer
-	state.peer = peer
-	state.mu.Unlock()
-	if old != nil {
-		_ = old.Close()
-	}
-	if err := c.Signal(ctx, offer.Kind, offer.Payload); err != nil {
-		return err
-	}
-	go watchPeer(peer)
-	return nil
-}
-
-func operatorReconnectLoop() {
-	if !reconnecting.CompareAndSwap(false, true) {
-		return
-	}
-	defer reconnecting.Store(false)
-	for attempt := 1; attempt <= 6; attempt++ {
-		if userStopped.Load() {
-			return
-		}
-		time.Sleep(time.Duration(attempt) * time.Second)
-		if userStopped.Load() {
-			return
-		}
-		state.mu.Lock()
-		ctx := state.ctx
-		c := state.sig
-		state.mu.Unlock()
-		if ctx == nil || c == nil {
-			setStatus("● Yeniden bağlanılamadı — elle yeniden bağlanın.")
-			return
-		}
-		setStatus(fmt.Sprintf("● Yeniden bağlanılıyor… (deneme %d/6)", attempt))
-		if err := operatorNegotiate(ctx, c); err != nil {
-			continue
-		}
-		deadline := time.Now().Add(10 * time.Second)
-		for time.Now().Before(deadline) {
-			if userStopped.Load() {
-				return
-			}
-			state.mu.Lock()
-			p := state.peer
-			state.mu.Unlock()
-			if p != nil && p.ConnectionState() == webrtc.PeerConnectionStateConnected {
-				return
-			}
-			time.Sleep(300 * time.Millisecond)
-		}
-	}
-	setStatus("● Otomatik yeniden bağlanma başarısız. 'Bağlantıyı Kes' ile kapatıp yeniden deneyin.")
-}
-
-// targetRebuild recreates the target-side peer when a renegotiation offer arrives
-// after a drop (auto-reconnect), mirroring the initial peer_joined setup.
-func targetRebuild(ctx context.Context, c *clientsignaling.Client) *webrtcpeer.Peer {
-	peer, err := newPeer(ctx, c, true)
-	if err != nil {
-		setStatus("● Yeniden bağlantı kurulamadı: " + err.Error())
-		return nil
-	}
-	peer.SetControlHandler(func(msg string) { defer logCrash("control"); handleRemoteInput(peer, msg) })
-	peer.SetFileHandler(func(d []byte) { defer logCrash("file"); handleRemoteFile(d) })
-	state.mu.Lock()
-	old := state.peer
-	state.peer = peer
-	state.mu.Unlock()
-	if old != nil {
-		_ = old.Close()
-	}
-	setStatus("● Karşı taraf yeniden bağlanıyor…")
-	startCapture(peer, ctx)
-	go watchPeer(peer)
-	return peer
-}
-
 func gatherSysInfo() string {
 	host, _ := os.Hostname()
 	gb := func(b uint64) float64 { return float64(b) / (1 << 30) }
@@ -4519,11 +3863,6 @@ func showActionsMenu() {
 	mi(menu, 0x0000, ID_CLIP_GET, "Panoyu Al")
 	mi(menu, 0x0000, ID_SHOT, "Ekran Görüntüsü Kaydet (F12)")
 	mi(menu, 0x0000, ID_SYSINFO, "Uzak Sistem Bilgisi")
-	annotLabel := "İşaretleme Modu — Aç"
-	if annotateMode.Load() {
-		annotLabel = "İşaretleme Modu — Kapat"
-	}
-	mi(menu, 0x0000, ID_ANNOT, annotLabel)
 	mi(menu, 0x0800, 0, "") // MF_SEPARATOR
 	sub, _, _ := createPopupMenu.Call()
 	if sub != 0 {
@@ -4623,20 +3962,6 @@ func onCommand(id int) {
 		if ps != nil {
 			ps.SendControlText("SYSINFO_REQ")
 		}
-	case ID_ANNOT:
-		on := !annotateMode.Load()
-		annotateMode.Store(on)
-		if on {
-			setStatus("● İşaretleme modu açık: ekranda sürükleyerek işaretleyin.")
-		} else {
-			state.mu.Lock()
-			pa := state.peer
-			state.mu.Unlock()
-			if pa != nil {
-				pa.SendControlText("ANNOT_CLEAR")
-			}
-			setStatus("● İşaretleme modu kapalı.")
-		}
 	case ID_KEY_WIN:
 		sendRemoteKey("keydown", 0x5B)
 		sendRemoteKey("keyup", 0x5B)
@@ -4689,34 +4014,21 @@ func onCommand(id int) {
 		resetSettingsUI()
 		return
 	case ID_CONNECT:
-		code, ws := parseJoinInput(getText(state.remoteEdit))
+		code := normalizeCode(getText(state.remoteEdit))
 		if code == "" {
-			setStatus("Bağlantı kodunu ya da nexdesk:// bağlantısını girin.")
+			setStatus("6 haneli sayısal bağlantı kodu gerekli.")
 			return
 		}
-		setOpEndpoint(ws)
 		setText(state.action, "BAĞLANIYOR...")
 		setStatus("● Bağlantı kodu doğrulanıyor...")
 		go startOperator(code)
-	case ID_SHARE_LINK:
-		code := getActiveCode()
-		if code == "" {
-			setStatus("Önce bir bağlantı kodu oluşturulmalı.")
-			return
-		}
-		if copyToClipboard(buildJoinLink(code)) {
-			setStatus("● Bağlantı linki panoya kopyalandı — karşı tarafa iletin.")
-		}
 	}
 }
 
 func stopSession() {
-	userStopped.Store(true)
 	auditLog("Oturum kapatıldı")
 	clearPrivacy()
 	setRemoteHost("")
-	annotateMode.Store(false)
-	clearAnnot()
 	resetConnInfo()
 	resetChat()
 	hideViewer()
@@ -4728,7 +4040,6 @@ func stopSession() {
 	state.cancel = nil
 	state.sig = nil
 	state.peer = nil
-	state.ctx = nil
 	state.mu.Unlock()
 
 	if cancel != nil {
@@ -5014,13 +4325,6 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 			hideCurtain()
 		}
 		return 0
-	case WM_APP_ANNOT:
-		if wParam != 0 {
-			clearAnnot()
-		} else {
-			drainAnnot()
-		}
-		return 0
 	case WM_APP_IDLE_CLOSE:
 		stopSession()
 		home()
@@ -5053,10 +4357,8 @@ func addComboItems(hwnd uintptr, items ...string) {
 func main() {
 	runtime.LockOSThread()
 	loadSettings()
-	loadBranding()
 	loadRecent()
 	initUITheme()
-	loadLogo()
 
 	class := utf16ptr(windowClass)
 	wc := wndclassex{
@@ -5072,7 +4374,7 @@ func main() {
 	hwnd, _, _ := createWindow.Call(
 		0,
 		uintptr(unsafe.Pointer(class)),
-		uintptr(unsafe.Pointer(utf16ptr(brandName()))),
+		uintptr(unsafe.Pointer(utf16ptr(appTitle))),
 		0x00CF0000|0x02000000, // WS_CLIPCHILDREN
 		200, 120, windowWidth, windowHeight,
 		0, 0, moduleHandle(), 0,
@@ -5085,7 +4387,7 @@ func main() {
 	createViewer(hwnd)
 	hideViewer()
 
-	state.header = createControl(hwnd, "STATIC", appTitle, 0x00000000, 40, 30, 650, 45, 0)
+	state.header = createControl(hwnd, "STATIC", "Remote Support", 0x00000000, 40, 30, 650, 45, 0)
 	state.subtitle = createControl(hwnd, "STATIC", "Güvenli uzaktan destek", 0x00000000, 40, 72, 650, 28, 0)
 	state.status = createControl(hwnd, "STATIC", "Bir işlem seç.", 0, 40, 585, 900, 32, 0)
 
@@ -5095,8 +4397,6 @@ func main() {
 	state.homeGive = giveSupport
 	state.action = createControl(hwnd, "BUTTON", "BAĞLAN", 0x00000001, 330, 365, 320, 58, ID_CONNECT)
 	state.copy = createControl(hwnd, "BUTTON", "Kodu kopyala", 0x00000001, 665, 365, 180, 58, ID_COPY_CODE)
-	state.shareLink = createControl(hwnd, "BUTTON", "Bağlantı Linki", 0x00000001, 0, 0, 10, 10, ID_SHARE_LINK)
-	hide(state.shareLink)
 	state.back = createControl(hwnd, "BUTTON", "← Geri", 0x00000001, 90, 365, 180, 58, ID_BACK)
 	state.fileSend = createControl(hwnd, "BUTTON", "Dosya Gönder", 0x00000001, 760, 14, 100, 30, ID_FILE_SEND)
 	state.fullscreenButton = createControl(hwnd, "BUTTON", "Tam Ekran", 0x00000001, 865, 14, 95, 30, ID_FULLSCREEN)

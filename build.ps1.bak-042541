@@ -9,18 +9,18 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
 
 Push-Location $Root
 try {
-    Write-Host 'Building NexDesk.exe ...'
+    Write-Host 'Building RemoteSupport.exe ...'
     $env:CGO_ENABLED = '0'
     $env:GOOS = 'windows'
     $env:GOARCH = 'amd64'
     # -H=windowsgui: GUI alt-sistemi olarak derle; açılışta konsol (DOS) penceresi çıkmasın.
-    go build -trimpath -ldflags='-s -w -H=windowsgui' -o (Join-Path $Dist 'NexDesk.exe') './cmd/remotesupport'
-    if ($LASTEXITCODE -ne 0) { throw 'NexDesk.exe build failed.' }
+    go build -trimpath -ldflags='-s -w -H=windowsgui' -o (Join-Path $Dist 'RemoteSupport.exe') './cmd/remotesupport'
+    if ($LASTEXITCODE -ne 0) { throw 'RemoteSupport.exe build failed.' }
 
-    Write-Host 'Signaling embedded in NexDesk.exe.'
+    Write-Host 'Signaling embedded in RemoteSupport.exe.'
 
     Write-Host ''
     Write-Host 'BUILD OK'
-    Write-Host (Join-Path $Dist 'NexDesk.exe')
+    Write-Host (Join-Path $Dist 'RemoteSupport.exe')
 }
 finally { Pop-Location }
