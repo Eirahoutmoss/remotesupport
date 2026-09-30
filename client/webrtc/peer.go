@@ -56,6 +56,20 @@ func NewWithConfig(approved bool, config webrtc.Configuration, send SignalFunc) 
 	if err != nil {
 		return nil, err
 	}
+	return newFromPC(pc, approved, send), nil
+}
+
+// NewWithSettings is NewWithConfig with a custom SettingEngine (e.g. fixed ICE
+// credentials for the compact serverless invite codes).
+func NewWithSettings(approved bool, config webrtc.Configuration, se webrtc.SettingEngine, send SignalFunc) (*Peer, error) {
+	pc, err := webrtc.NewAPI(webrtc.WithSettingEngine(se)).NewPeerConnection(config)
+	if err != nil {
+		return nil, err
+	}
+	return newFromPC(pc, approved, send), nil
+}
+
+func newFromPC(pc *webrtc.PeerConnection, approved bool, send SignalFunc) *Peer {
 	p := &Peer{pc: pc, sendSig: send, approved: approved, screenReady: make(chan struct{})}
 
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
@@ -107,7 +121,7 @@ func NewWithConfig(approved bool, config webrtc.Configuration, send SignalFunc) 
 			_ = dc.Close()
 		}
 	})
-	return p, nil
+	return p
 }
 
 func (p *Peer) ConnectionState() webrtc.PeerConnectionState {

@@ -13,6 +13,14 @@ try {
     $env:CGO_ENABLED = '0'
     $env:GOOS = 'windows'
     $env:GOARCH = 'amd64'
+    # Exe ikonu: assets\nexdesk.ico -> rsrc_windows_amd64.syso (go build bunu otomatik gömer).
+    $Ico = Join-Path $Root 'cmd\remotesupport\assets\nexdesk.ico'
+    $Syso = Join-Path $Root 'cmd\remotesupport\rsrc_windows_amd64.syso'
+    if (-not (Test-Path $Syso) -or (Get-Item $Ico).LastWriteTime -gt (Get-Item $Syso).LastWriteTime) {
+        Write-Host 'Generating icon resource ...'
+        go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico $Ico -o $Syso
+        if ($LASTEXITCODE -ne 0) { throw 'Icon resource generation failed.' }
+    }
     # -H=windowsgui: GUI alt-sistemi olarak derle; açılışta konsol (DOS) penceresi çıkmasın.
     go build -trimpath -ldflags='-s -w -H=windowsgui' -o (Join-Path $Dist 'NexDesk.exe') './cmd/remotesupport'
     if ($LASTEXITCODE -ne 0) { throw 'NexDesk.exe build failed.' }

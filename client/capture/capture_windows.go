@@ -12,6 +12,7 @@ import (
 	"math"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -69,7 +70,58 @@ var (
 	procSelectObject           = gdi32.NewProc("SelectObject")
 	procBitBlt                 = gdi32.NewProc("BitBlt")
 	procGetDIBits              = gdi32.NewProc("GetDIBits")
+	procGetCursorInfo          = user32.NewProc("GetCursorInfo")
+	procGetIconInfo            = user32.NewProc("GetIconInfo")
+	procDrawIconEx             = user32.NewProc("DrawIconEx")
 )
+
+// DrawCursor paints the mouse pointer into captured frames (on by default) so
+// the operator sees where the remote cursor is.
+var DrawCursor atomic.Bool
+
+// Grayscale drops colour from captured frames; used by adaptive quality on
+// very poor links.
+var Grayscale atomic.Bool
+
+func init() { DrawCursor.Store(true) }
+
+type cursorInfo struct {
+	CbSize uint32
+	Flags  uint32
+	Cursor uintptr
+	X, Y   int32
+}
+
+type iconInfo struct {
+	FIcon    int32
+	XHotspot uint32
+	YHotspot uint32
+	HbmMask  uintptr
+	HbmColor uintptr
+}
+
+// drawCursor overlays the current pointer onto memdc, whose origin is the
+// monitor's top-left corner at (originX, originY) in virtual-screen space.
+func drawCursor(memdc uintptr, originX, originY int) {
+	ci := cursorInfo{CbSize: uint32(unsafe.Sizeof(cursorInfo{}))}
+	if r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r == 0 || ci.Flags&1 == 0 || ci.Cursor == 0 {
+		return // CURSOR_SHOWING not set
+	}
+	var ii iconInfo
+	hx, hy := int32(0), int32(0)
+	if r, _, _ := procGetIconInfo.Call(ci.Cursor, uintptr(unsafe.Pointer(&ii))); r != 0 {
+		hx, hy = int32(ii.XHotspot), int32(ii.YHotspot)
+		if ii.HbmMask != 0 {
+			procDeleteObject.Call(ii.HbmMask)
+		}
+		if ii.HbmColor != 0 {
+			procDeleteObject.Call(ii.HbmColor)
+		}
+	}
+	x := ci.X - hx - int32(originX)
+	y := ci.Y - hy - int32(originY)
+	procDrawIconEx.Call(memdc, uintptr(x), uintptr(y), ci.Cursor, 0, 0, 0, 0, 0x0003) // DI_NORMAL
+}
 
 var captureMu sync.Mutex
 
@@ -166,6 +218,10 @@ func captureMonitorScaled(index int, quality int, maxHeight int) (Frame, error) 
 	if ok == 0 {
 		return Frame{}, fmt.Errorf("capture: BitBlt: %w", err)
 	}
+	if DrawCursor.Load() {
+		drawCursor(memdc, m.X, m.Y)
+	}
+	gray := Grayscale.Load()
 
 	hdr := bitmapInfoHeader{BiSize: uint32(unsafe.Sizeof(bitmapInfoHeader{})), BiWidth: int32(m.Width), BiHeight: -int32(m.Height), BiPlanes: 1, BiBitCount: 32, BiCompression: biRGB}
 	bmi := bitmapInfo{BmiHeader: hdr}
@@ -181,9 +237,14 @@ func captureMonitorScaled(index int, quality int, maxHeight int) (Frame, error) 
 		dst := img.Pix[y*img.Stride:]
 		for x := 0; x < m.Width; x++ {
 			i := x * 4
-			dst[i+0] = src[i+2]
-			dst[i+1] = src[i+1]
-			dst[i+2] = src[i+0]
+			if gray {
+				l := uint8((uint32(src[i+2])*77 + uint32(src[i+1])*150 + uint32(src[i+0])*29) >> 8)
+				dst[i+0], dst[i+1], dst[i+2] = l, l, l
+			} else {
+				dst[i+0] = src[i+2]
+				dst[i+1] = src[i+1]
+				dst[i+2] = src[i+0]
+			}
 			dst[i+3] = 0xff
 		}
 	}

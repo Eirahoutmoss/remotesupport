@@ -65,8 +65,8 @@ func TestCreatedCodeIsSixDigits(t *testing.T) {
 	if created.Type != "created" {
 		t.Fatalf("got %q", created.Type)
 	}
-	if !regexp.MustCompile(`^[0-9]{6}$`).MatchString(created.Code) {
-		t.Fatalf("code is not six digits: %q", created.Code)
+	if !regexp.MustCompile(`^[0-9]{10}$`).MatchString(created.Code) {
+		t.Fatalf("code is not ten digits: %q", created.Code)
 	}
 }
 
