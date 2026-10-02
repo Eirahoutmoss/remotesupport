@@ -327,6 +327,7 @@ func b1SessionEnded() {
 	sasVerified.Store(false)
 	opAdapt.Store(0)
 	adaptLevel.Store(0)
+	relayPath.Store(false)
 	capture.Grayscale.Store(false)
 	bookSeenOnce.Range(func(k, _ any) bool { bookSeenOnce.Delete(k); return true })
 }

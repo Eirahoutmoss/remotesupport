@@ -39,14 +39,17 @@ Görüntü de, klavye-fare de, dosyalar da doğrudan iki bilgisayar arasında (p
 |---|---|
 | 🔒 **Uçtan uca şifreli** | Görüntü, kontrol ve dosyalar WebRTC (DTLS) ile şifrelenir. |
 | ✅ **Her zaman onaylı** | Kimse sizin "İzin Ver" demeden ekranınıza bağlanamaz. |
-| 🌍 **Sunucusuz internet bağlantısı** | İngiltere'deki birine bile: internet kodu (UPnP) ya da 97 karakterlik davet kodu. |
+| 🛰️ **Her ağdan bağlantı** | Kendi TURN + signaling sunucunuzla (ör. Oracle Cloud ücretsiz katman) 10 haneli kod dünyanın her yerinden çalışır. |
+| 🌍 **Sunucusuz yedek yollar** | İnternet kodu (UPnP) ya da 97 karakterlik davet kodu. |
+| ⚡ **Akıllı ekran aktarımı** | Yalnızca değişen 64×64 karolar gönderilir; durgun ekran sıfır trafik, yazı yazarken ~35 kat daha az veri. |
 | 🧭 **Doğrudan P2P** | STUN ile doğrudan bağlantı; çok katı ağlarda isteğe bağlı TURN. |
 | 🛡️ **Dolandırıcılık kalkanı** | Oturumda banka/ödeme sayfası açılırsa görüntü ve kontrol anında durur. |
 | 🔑 **SAS doğrulaması** | Tek tıkla karşılaştırma; uyuşmazsa oturum hemen kesilir. |
 | 🔁 **Otomatik yeniden bağlanma** | Ağ dalgalanınca oturum geri gelir; yarım kalan dosya **kaldığı yerden** sürer. |
 | 🖥️ **Çoklu monitör** | Karşı taraftaki tüm ekranlar arasında geçiş. |
 | 🖱️ **Uzak imleç & tıklama efekti** | Teknisyen imleci görür; kullanıcı teknisyenin nereye tıkladığını görür. |
-| 📶 **Uyarlamalı kalite** | Hat zayıflarsa 720p → 480p → gri tona iner, düzelince geri çıkar. |
+| 📶 **Uyarlamalı kalite** | Ağ gerçekten tıkanınca 720p → 480p'ye iner, açılınca geri çıkar. |
+| 🩺 **Bağlantı tanısı** | Bağlanamazsa adresleri, adımları ve olası sebebi (symmetric NAT, UDP engeli, eksik port yönlendirme…) raporlar. |
 | 🧰 **Onarım paketi** | DNS, geçici dosyalar, yazıcı kuyruğu, Gezgin, winsock, sfc — tek tık. |
 | 🎬 **Oturum video kaydı** | MJPEG AVI olarak kaydedilir; karşı tarafa "KAYIT ALINIYOR" gösterilir. |
 | ⏺️ **Makrolar** | Yaptığınız işlemleri kaydedin, sonra tek tıkla tekrar oynatın. |
@@ -107,13 +110,14 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 ---
 
-## 🌍 Bağlantı yolları — sunucu kurmadan
+## 🌍 Bağlantı yolları
 
 Hangi yol kullanılırsa kullanılsın, kod NexDesk'te **aynı kutuya yapıştırılır**; program türünü kendisi anlar.
 
 | Yol | Ne zaman? | Kod | Nasıl çalışır? |
 |---|---|---|---|
-| 🏠 **Yerel ağ kodu** | Aynı ofis/ev ağı | `591 490 5011` | Gömülü signaling + LAN keşfi. |
+| 🛰️ **Sunucu üzerinden (önerilen)** | Her yer, her ağ | `591 490 5011` | Gömülü/ayarlı signaling + TURN sunucusu; doğrudan bağlantı olmazsa trafik şifreli olarak sunucudan aktarılır. |
+| 🏠 **Yerel ağ kodu** | Aynı ofis/ev ağı, sunucu yoksa | `591 490 5011` | Gömülü signaling + LAN keşfi. |
 | 🌐 **İnternet kodu** | Farklı şehir/ülke, ev modemi | `REQKE-2GZKC-0FZX1-S32WG` | Modemde port **UPnP ile otomatik** açılır, dış IP koda gömülür. |
 | ✉️ **Davet kodu** | UPnP yok, kurumsal ağ, CGNAT | `DAVET-…` / `YANIT-…` (97 karakter) | Tamamen sunucusuz iki adımlı el sıkışma. |
 
@@ -132,6 +136,60 @@ Kod yalnızca yeniden üretilemeyen bilgileri taşır: DTLS parmak izi (tam 32 b
 
 > ℹ️ Dış IP'yi öğrenmek için ücretsiz servisler (ipify vb.) ve Google STUN kullanılır; **veri bu servislerden geçmez**. İki taraf da çok katı ağdaysa (symmetric NAT) doğrudan bağlantı kurulamaz; **Ayarlar → TURN** alanını kullanın.
 
+---
+
+## 🛰️ Kendi sunucunuz (TURN + signaling)
+
+Kurumsal ağlar ve mobil operatörler çoğunlukla **symmetric NAT** kullanır; bu durumda iki bilgisayar arasında doğrudan bağlantı **hiçbir yöntemle** kurulamaz. Çözüm, trafiği şifreli olarak aktaran küçük bir sunucudur. Gereken her şey `sunucu/` klasöründe:
+
+| Dosya | Açıklama |
+|---|---|
+| `sunucu/sunucu-kur.sh` | Ubuntu 22.04/24.04 için tek komutluk kurulum: **coturn** (TURN) + **NexDesk signaling** (systemd servisi), port kontrolü, ufw/iptables kuralları, rastgele TURN parolası. |
+| `sunucu/nexdesk-signaling` | Linux için derlenmiş signaling sunucusu (depoda yok; aşağıdaki komutla üretin). |
+
+```powershell
+$env:GOOS='linux'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'
+go build -trimpath -ldflags='-s -w' -o sunucu\nexdesk-signaling ./cmd/signaling
+```
+
+### Oracle Cloud ücretsiz katmanla 10 dakikada kurulum
+1. **cloud.oracle.com** → ücretsiz hesap. *Home region* sonradan değişmez; Türkiye'ye yakın bir Avrupa bölgesi seçin (Frankfurt/Amsterdam).
+2. **Compute → Instances → Create:** Ubuntu 22.04, shape **VM.Standard.E2.1.Micro** (*Always Free*), SSH anahtarını indirin.
+3. Instance oluşunca public IP yoksa: VNIC → IP administration → Edit → **Ephemeral public IP**.
+4. **Subnet → Security List → Add Ingress Rules** (kaynak `0.0.0.0/0`): TCP 8091, UDP 3478, TCP 3478, UDP 49160-49200.
+5. Dosyaları gönderip kurun:
+   ```bash
+   scp -i anahtar.key sunucu/sunucu-kur.sh sunucu/nexdesk-signaling ubuntu@SUNUCU_IP:~/
+   ssh -i anahtar.key ubuntu@SUNUCU_IP "sed -i 's/\r$//' sunucu-kur.sh && sudo bash sunucu-kur.sh"
+   ```
+6. Betiğin yazdığı değerleri NexDesk'e verin (aşağıda).
+
+> Kendi sunucunuz (ör. kurum içi bir Ubuntu) da olur; o zaman güvenlik duvarında TCP 8091, UDP/TCP 3478 ve UDP 49160-49200 bu makineye yönlendirilmeli (çıkışta port değiştirmeyen **statik NAT** ile).
+
+### Sunucu ayarlarını NexDesk'e verme
+- **Exe'ye gömmek (önerilen):** `cmd/remotesupport/assets/server-defaults.local.json` oluşturun (git'e girmez) ve derleyin:
+  ```json
+  {
+    "signaling_url": "ws://SUNUCU_IP:8091/v1/ws",
+    "turn_url": "turn:SUNUCU_IP:3478?transport=tcp",
+    "turn_user": "nexdesk",
+    "turn_pass": "betiğin-ürettiği-parola"
+  }
+  ```
+  Ayarlar sayfasındaki alanlar boş kaldıkça gömülü sunucu kullanılır; kullanıcı kendi değerini girerse o geçerlidir. Gömülü sunucuya ulaşılamazsa NexDesk yerel ağ signaling'ine döner.
+- **Elle:** Ayarlar → *İnternet Signaling* ve *TURN* alanları. Birden fazla adres virgülle girilebilir (ör. dış + iç adres); ulaşılabilen ilki kullanılır.
+
+> ⚠️ Gömülü TURN parolası exe'nin içindedir. Exe'yi ele geçiren biri sunucunuzu aktarma için kullanabilir (görüntüler yine uçtan uca şifreli kalır, iç ağa köprü kurulamaz). Kurum dışına dağıtacaksanız bunu göz önünde bulundurun. `server-defaults.local.json` dosyasını **asla** depoya göndermeyin.
+
+---
+
+## ⚡ Ekran aktarımı nasıl çalışır?
+
+- Ekran 64×64'lük karolara bölünür; her karede **yalnızca değişen karolar** tek bir JPEG "atlas" içinde gönderilir, konumları JPEG yorum segmentinde taşınır.
+- Ekran değişmiyorsa **hiç veri gitmez**; 5 saniyede bir ve büyük değişimlerde tam kare gönderilir.
+- Yeni kare yalnızca ağ bir öncekini teslim ettiğinde üretilir (geri basınç): hat yavaşsa görüntü gecikmez, kare atlanır.
+- Uzun hatlar için WebRTC veri kanalı alma penceresi 8 MB'a çıkarıldı; ölçekli (%125/%150) ekranlar gerçek piksel olarak yakalanır.
+- Uyarlamalı kalite, destek alan tarafta "ağ önceki kareyi yetiştirebildi mi?" ölçüsüyle çalışır.
 ---
 
 ## 🧰 Oturum içi araçlar (İşlemler ▾)
@@ -176,6 +234,7 @@ NexDesk, "kötüye kullanılamayacak" bir destek aracı olacak şekilde tasarlan
 - 🔑 **SAS doğrulaması.** Ortadaki-adam saldırılarına karşı; uyuşmazlıkta oturum otomatik kesilir.
 - 🛡️ **Dolandırıcılık kalkanı.** Oturum sırasında banka, e-Devlet, kripto borsası veya ödeme sayfası öne gelirse görüntü ve uzaktan kontrol durur; kullanıcıya *"sizi arayan kişi kendini banka/polis olarak tanıttıysa bu dolandırıcılık olabilir"* uyarısıyla bağlantıyı kesme seçeneği sunulur (varsayılan: **kes**).
 - 🧱 **Rol koruması.** Kontrol mesajları yalnızca doğru tarafta kabul edilir; destek alan taraf, teknisyenin bilgisayarını yönetemez ya da kilitleyemez.
+- 🧯 **Güvenlik duvarı izni yalnızca onayla.** "Destek Al" ilk kez açıldığında NexDesk, Windows Güvenlik Duvarı'na kural eklemek için kullanıcıya sorar ve UAC onayı ister; sessizce kural eklemez.
 - 🔒 **Güvenli masaüstüne saygı.** Ctrl+Alt+Del, UAC ve kilit ekranı sırasında paylaşım bekler, teknisyene bildirilir; kullanıcı kapatınca kendiliğinden devam eder.
 - ⏱️ **Boşta kalma koruması.** Uzun süre işlem olmazsa uyarır (isteğe bağlı otomatik kesme).
 - 📜 **Denetim kaydı.** Bağlantı, onay, onarım ve kayıt olayları yerel günlüğe yazılır.
@@ -223,6 +282,8 @@ Hepsi `%APPDATA%\RemoteSupport\` altında, yalnızca bu bilgisayarda tutulur:
 | `macros\*.json` | Kayıtlı makrolar. |
 | `crash.log` | Yakalanan hatalar. |
 
+> Sorun ayıklarken `NEXDESK_DEBUG=1` ortam değişkeniyle başlatılırsa tüm durum mesajları da `netlog.log`'a yazılır.
+
 Video kayıtları `Videolar\NexDesk\`, alınan dosyalar ve ekran görüntüleri `İndirilenler` klasörüne gider.
 
 ---
@@ -242,7 +303,8 @@ Video kayıtları `Videolar\NexDesk\`, alınan dosyalar ve ekran görüntüleri 
 └───────────────┘                                         └───────────────┘
 ```
 
-- **Signaling** yalnızca iki tarafı tanıştırır; oturum verisi taşımaz ve `NexDesk.exe` içine gömülüdür. Davet kodu yolunda hiç kullanılmaz.
+- **Signaling** yalnızca iki tarafı tanıştırır; oturum verisi taşımaz. `NexDesk.exe` içine gömülüdür ya da kendi sunucunuzda çalışır. Davet kodu yolunda hiç kullanılmaz.
+- **TURN** yalnızca doğrudan bağlantı kurulamadığında devreye girer ve şifreli trafiği olduğu gibi aktarır; içeriği göremez.
 - Kodlar **tek kullanımlık** ve **kısa ömürlüdür**.
 - Ekran yakalama GDI `BitBlt` (imleç dahil), arayüz ham Win32 (owner-draw, çift tamponlu çizim) — ağır UI çatısı yok.
 
@@ -264,6 +326,9 @@ RemoteSupport/
 │  │  ├─ b2_*.go                #   kalkan, devir, karşılıklı ekran, kayıt, makro
 │  │  ├─ b3_net.go              #   internet kodu + UPnP
 │  │  ├─ b3_manual.go · b3_compact.go  # sunucusuz davet kodu
+│  │  ├─ b3_defaults.go         #   gömülü sunucu ayarları (+ .local.json)
+│  │  ├─ b3_firewall.go · b3_diag.go   # güvenlik duvarı izni · bağlantı tanısı
+│  │  ├─ b4_tiles.go            #   karo/delta ekran kodlama
 │  │  ├─ qr.go                  #   bağımsız QR kod üretici
 │  │  └─ assets/                #   logo.png, nexdesk.ico
 │  ├─ signaling/                # tek başına signaling sunucusu (opsiyonel)
@@ -271,6 +336,7 @@ RemoteSupport/
 ├─ client/                      # capture · screen · signaling · webrtc
 ├─ server/signaling/            # rendezvous/signaling sunucu mantığı
 ├─ shared/                      # protokol · uçtan uca yardımcılar
+├─ sunucu/                      # sunucu-kur.sh (coturn + signaling kurulumu)
 └─ build.ps1                    # tek komutla derleme (ikon kaynağı dahil)
 ```
 

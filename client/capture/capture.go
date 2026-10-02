@@ -35,6 +35,12 @@ func CaptureMonitorScaled(index int, quality int, maxHeight int) (Frame, error) 
 	return captureMonitorScaled(index, quality, maxHeight)
 }
 
+// CaptureMonitorImage captures one display as raw RGBA, optionally limited
+// to maxHeight (used by the tile/delta encoder).
+func CaptureMonitorImage(index int, maxHeight int) (*image.RGBA, error) {
+	return captureMonitorImage(index, maxHeight)
+}
+
 // Capture captures the selected monitor at the requested JPEG quality.
 func Capture(index int, quality int) (Frame, error) { return CaptureMonitor(index, quality) }
 

@@ -370,6 +370,7 @@ func startSessionStats(peer *webrtcpeer.Peer) {
 			fpsValue.Store(int32(now - last))
 			last = now
 			if path := peer.PathKind(); path != "" {
+				relayPath.Store(path == "relay")
 				setConnInfo(path, "")
 			}
 			if _, sas := getConnInfo(); sas == "" {

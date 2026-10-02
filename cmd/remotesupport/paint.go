@@ -277,7 +277,7 @@ func paintConnectedChrome(hdc uintptr, w, h int) {
 		fmt.Sprintf("Boşta: %02d:%02d", idleS/60, idleS%60),
 		fmt.Sprintf("%d FPS", fpsValue.Load()),
 		"Çözünürlük: " + res,
-		"Kodek: H.264",
+		"Kodek: JPEG karo (yalnızca değişen bölgeler)",
 		pathLabel,
 	}
 	if sas != "" {
@@ -317,7 +317,7 @@ func paintSettings(hdc uintptr, w int) {
 	// A — signaling
 	paintCard(hdc, contentX, 168, cw, 84, uiPanelColor, uiBorderColor, 14)
 	paintText(hdc, "BAĞLANTI", contentX+24, 182, 300, 16, uiLabelFont, uiAccentColor, txVLeft)
-	paintText(hdc, "İnternet Signaling — boş bırakılırsa LAN keşfi", contentX+24, 210, 300, 18, uiBodyFont, uiMutedColor, txVLeft)
+	paintText(hdc, "İnternet Signaling — boşsa gömülü kurum sunucusu, o da yoksa LAN", contentX+24, 210, 300, 18, uiBodyFont, uiMutedColor, txVLeft)
 	// B — TURN
 	paintCard(hdc, contentX, 262, cw, 138, uiPanelColor, uiBorderColor, 14)
 	paintText(hdc, "TURN SUNUCUSU — İSTEĞE BAĞLI", contentX+24, 276, 400, 16, uiLabelFont, uiAccentColor, txVLeft)
@@ -365,4 +365,12 @@ func paintFooter(hdc uintptr, w, h int, connected bool) {
 	label := "Bağlantı Durumu: " + map[bool]string{true: "Aktif", false: "Hazır"}[connected]
 	paintText(hdc, label, 44, footerY, 260, footerH, uiBodyFont, uiTextColor, txVLeft)
 	paintText(hdc, "Program Yazarı: "+brandAuthor()+"  •  © 2026", w-360, footerY, 336, footerH, uiBodyFont, uiMutedColor, txVRight)
+	// Live status line (file transfer %, reconnects, errors …). It used to be
+	// kept only in memory, so progress was never visible.
+	state.mu.Lock()
+	status := state.statusText
+	state.mu.Unlock()
+	if mid := w - 360 - 320; mid > 120 {
+		paintText(hdc, status, 320, footerY, mid-16, footerH, uiBodyFont, uiCyanColor, txEnd)
+	}
 }

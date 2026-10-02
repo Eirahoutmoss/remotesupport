@@ -202,8 +202,11 @@ func primaryLANIP() string {
 // address on the embedded signaling port.
 func shareWSURL() string {
 	cfg := currentSettings()
-	if v := strings.TrimSpace(cfg.SignalingURL); v != "" {
-		return v
+	if l := splitURLs(cfg.SignalingURL); len(l) > 0 {
+		return l[0]
+	}
+	if builtinSignaling() != "" {
+		return splitURLs(builtinServer().SignalingURL)[0] // public address for the link/QR
 	}
 	inetMu.Lock()
 	pub := inetWS

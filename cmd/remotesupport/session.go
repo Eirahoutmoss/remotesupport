@@ -104,6 +104,7 @@ func clearResolutionButtons() {
 }
 
 func supportMode() {
+	ensureFirewall()
 	startEmbeddedSignaling()
 	clearChildren()
 	state.mode = 1
@@ -389,20 +390,8 @@ func startOperator(code string) {
 
 func newPeer(ctx context.Context, c *clientsignaling.Client, approved bool) (*webrtcpeer.Peer, error) {
 	_ = ctx
-	cfg := currentSettings()
-	ice := []webrtc.ICEServer{
-		{URLs: []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}},
-	}
-	if u := strings.TrimSpace(cfg.TurnURL); u != "" {
-		srv := webrtc.ICEServer{URLs: []string{u}}
-		if strings.TrimSpace(cfg.TurnUser) != "" {
-			srv.Username = cfg.TurnUser
-			srv.Credential = cfg.TurnPass
-			srv.CredentialType = webrtc.ICECredentialTypePassword
-		}
-		ice = append(ice, srv)
-	}
-	return webrtcpeer.NewWithConfig(approved, webrtc.Configuration{ICEServers: ice}, func(sctx context.Context, sig webrtcpeer.Signal) error {
+	ice := iceServers()
+	return webrtcpeer.NewWithSettings(approved, webrtc.Configuration{ICEServers: ice}, peerSettings(), func(sctx context.Context, sig webrtcpeer.Signal) error {
 		return c.Signal(sctx, sig.Kind, sig.Payload)
 	})
 }
@@ -434,7 +423,7 @@ func watchPeer(peer *webrtcpeer.Peer) {
 			everConnected.Store(true)
 			reconnecting.Store(false)
 			if host, err := os.Hostname(); err == nil {
-				_ = peer.SendControlText("HELLO:" + host)
+				go sendCtlRetry(peer, "HELLO:"+host)
 			}
 			if state.mode == 1 {
 				sendRemoteMonitorList(peer)

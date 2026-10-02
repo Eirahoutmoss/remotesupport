@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 )
@@ -114,11 +115,39 @@ func (t *Transport) writeLoop() {
 			return
 		default:
 		}
+		// Back-pressure: don't pile frames into the SCTP send buffer faster
+		// than the link drains it. Over a slow/relayed path the buffer grew
+		// without bound and the viewer fell minutes behind (looked frozen)
+		// while input still worked. While we wait, LatestQueue keeps only the
+		// newest frame, so stale frames are dropped instead of queued.
+		for t.dc.BufferedAmount() > maxBufferedBytes {
+			select {
+			case <-t.done:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+		if next, ok := t.queue.TryGet(); ok {
+			wire = next // a newer frame arrived while waiting
+		}
 		if err := t.sendFrameChunks(wire); err != nil {
 			return
 		}
 	}
 }
+
+// Idle reports that the previous frame has been handed to the network and
+// the send buffer is nearly drained. Delta (tile) frames depend on every
+// earlier frame arriving, so the producer only emits a new frame when Idle —
+// LatestQueue then never has to drop one.
+func (t *Transport) Idle() bool {
+	return t.queue.Empty() && t.dc.BufferedAmount() < idleBufferedBytes
+}
+
+const idleBufferedBytes = 256 << 10
+
+// maxBufferedBytes caps unsent screen data per channel (~1 MiB).
+const maxBufferedBytes = 1 << 20
 
 func chunkFrame(wire []byte) ([][]byte, error) {
 	if len(wire) == 0 {

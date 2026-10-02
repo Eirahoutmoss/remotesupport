@@ -3,6 +3,7 @@
 package main
 
 import (
+	"os"
 	"syscall"
 	"unsafe"
 )
@@ -32,6 +33,9 @@ func getText(hwnd uintptr) string {
 }
 
 func setStatus(text string) {
+	if os.Getenv("NEXDESK_DEBUG") != "" {
+		netlogf("[durum pid=%d] %s", os.Getpid(), text)
+	}
 	state.mu.Lock()
 	state.statusText = text
 	h := state.status

@@ -128,6 +128,24 @@ func (p *Peer) ConnectionState() webrtc.PeerConnectionState {
 	return p.pc.ConnectionState()
 }
 
+// ICEState reports the ICE connection state (diagnostics).
+func (p *Peer) ICEState() webrtc.ICEConnectionState {
+	return p.pc.ICEConnectionState()
+}
+
+// SelectedPair describes the nominated candidate pair, or "" (diagnostics).
+func (p *Peer) SelectedPair() string {
+	sctp := p.pc.SCTP()
+	if sctp == nil || sctp.Transport() == nil || sctp.Transport().ICETransport() == nil {
+		return ""
+	}
+	pair, err := sctp.Transport().ICETransport().GetSelectedCandidatePair()
+	if err != nil || pair == nil || pair.Local == nil || pair.Remote == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s %s:%d ⇄ %s %s:%d", pair.Local.Typ, pair.Local.Address, pair.Local.Port, pair.Remote.Typ, pair.Remote.Address, pair.Remote.Port)
+}
+
 // PathKind reports how media is flowing over the selected ICE candidate pair:
 // "relay" when a TURN relay candidate is in use on either end, "direct"
 // otherwise, or "" when no pair is selected yet. Diagnostics only.
@@ -328,6 +346,14 @@ func (p *Peer) SendScreenFrame(f screen.Frame) error {
 		return errors.New("webrtc: screen channel not open")
 	}
 	return t.Send(f)
+}
+
+// ScreenIdle reports whether the screen channel can take the next frame.
+func (p *Peer) ScreenIdle() bool {
+	p.mu.Lock()
+	t := p.screen
+	p.mu.Unlock()
+	return t != nil && t.Idle()
 }
 
 func (p *Peer) SetScreenHandler(fn screen.Handler) {

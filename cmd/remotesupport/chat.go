@@ -35,6 +35,9 @@ var chatMu sync.Mutex
 var chatLog []chatMsg
 
 func addChat(mine bool, text string) {
+	if os.Getenv("NEXDESK_DEBUG") != "" {
+		netlogf("[sohbet pid=%d mine=%v] %s", os.Getpid(), mine, text)
+	}
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
@@ -77,7 +80,7 @@ func sendChat() {
 		return
 	}
 	if err := pr.SendControlText("CHAT:" + txt); err != nil {
-		setStatus("● Mesaj gönderilemedi.")
+		setStatus("● Mesaj gönderilemedi: " + err.Error())
 		return
 	}
 	addChat(true, txt)

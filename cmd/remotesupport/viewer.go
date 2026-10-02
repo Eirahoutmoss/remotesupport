@@ -110,6 +110,9 @@ func toggleFullscreen() {
 		cy := systemMetric(1)
 		setWindowPos.Call(state.hwnd, 0, 0, 0, uintptr(maxInt(1, int(cx))), uintptr(maxInt(1, int(cy))), 0x0004|0x0020|0x0040)
 		fullscreen.Store(true)
+		if viewer.hwnd != 0 {
+			setFocus.Call(viewer.hwnd) // keys go to the remote screen right away
+		}
 		hide(state.fullscreenButton)
 		showResolutionControls(false)
 		showMonitorControls(false)
@@ -206,7 +209,13 @@ func saveViewerScreenshot() {
 }
 
 func setViewerFrame(f screen.Frame) {
-	recordFrame(f)
+	if f.Monitor == reverseMonitorTag {
+		return
+	}
+	if tm, ok := parseTileMeta(f.JPEG); ok {
+		applyTileDelta(int(f.Width), int(f.Height), f.JPEG, tm)
+		return
+	}
 	img, err := jpeg.Decode(bytes.NewReader(f.JPEG))
 	if err != nil {
 		return

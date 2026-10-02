@@ -34,6 +34,7 @@ var (
 	manualOpBtn, manualAgentBtn uintptr
 	manualMu                    sync.Mutex
 	manualBlob                  string // blob waiting to be shown on the GUI thread
+	manualOffer                 []byte // operator's own offer, for diagnostics
 	manualPeer                  *webrtcpeer.Peer
 )
 
@@ -60,19 +61,6 @@ func unpackBlob(tag, s string) ([]byte, bool) {
 		return nil, false
 	}
 	return b, true
-}
-
-func iceServers() []webrtc.ICEServer {
-	cfg := currentSettings()
-	ice := []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}}}
-	if u := strings.TrimSpace(cfg.TurnURL); u != "" {
-		srv := webrtc.ICEServer{URLs: []string{u}}
-		if strings.TrimSpace(cfg.TurnUser) != "" {
-			srv.Username, srv.Credential, srv.CredentialType = cfg.TurnUser, cfg.TurnPass, webrtc.ICECredentialTypePassword
-		}
-		ice = append(ice, srv)
-	}
-	return ice
 }
 
 // newManualPeer has no trickle signaling: candidates travel inside the SDP.
@@ -120,6 +108,7 @@ func manualOperatorStart() {
 	state.mu.Unlock()
 	manualMu.Lock()
 	manualPeer = peer
+	manualOffer = offer.Payload
 	if c, err := compactPack(false, seed, offer.Payload); err == nil {
 		manualBlob = c
 	} else {
@@ -138,6 +127,7 @@ func manualOperatorShow() {
 	if blob == "" || peer == nil {
 		return
 	}
+	var lastAnswer []byte
 	copyToClipboard(blob)
 	showCodeDialog("Sunucusuz Bağlantı — 1/2", "DAVET kodu (panoya da kopyalandı). Karşı tarafa gönderin; o 'Destek Al' > 'Davet Kodunu Yapıştır' ile girip size bir YANIT kodu gönderecek.", blob)
 	for {
@@ -159,6 +149,7 @@ func manualOperatorShow() {
 			}
 			continue
 		}
+		lastAnswer = payload
 		if err := peer.AddSignal(webrtcpeer.Signal{Kind: "answer", Payload: payload}); err != nil {
 			showInfo("Yanıt uygulanamadı: " + err.Error())
 			_ = peer.Close()
@@ -168,6 +159,10 @@ func manualOperatorShow() {
 	}
 	setStatus("● Yanıt alındı — doğrudan bağlantı kuruluyor…")
 	go watchPeer(peer)
+	manualMu.Lock()
+	own := manualOffer
+	manualMu.Unlock()
+	go manualDiag(peer, own, lastAnswer, true)
 }
 
 // ---- agent ----
@@ -218,6 +213,7 @@ func manualAgentAnswer(offer []byte) {
 	state.mu.Unlock()
 	startCapture(peer, ctx)
 	go watchPeer(peer)
+	go manualDiag(peer, answer.Payload, offer, false)
 	manualMu.Lock()
 	if c, err := compactPack(true, seed, answer.Payload); err == nil {
 		manualBlob = c

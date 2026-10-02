@@ -30,9 +30,14 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 			return
 		}
 		setStatus("● Ekran kanalı hazır. Ekran aktarılıyor...")
-		ticker := time.NewTicker(100 * time.Millisecond)
+		// ~15 fps cap. Frames are produced only when the screen channel has
+		// drained (ScreenIdle), and only changed 64x64 tiles are sent.
+		ticker := time.NewTicker(66 * time.Millisecond)
 		defer ticker.Stop()
+		enc := &tileEncoder{}
+		activeTiles.Store(enc)
 		var seq uint64
+		var cong congestion
 		for {
 			select {
 			case <-ctx.Done():
@@ -40,6 +45,11 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 			case <-ticker.C:
 				if fraudHold.Load() {
 					continue // fraud shield: stop streaming until the user decides
+				}
+				busy := !peer.ScreenIdle()
+				cong.tick(peer, busy)
+				if busy {
+					continue // link still busy with the previous frame
 				}
 				monitor := int(activeMonitor.Load())
 				maxHeight := int(captureMaxHeight.Load())
@@ -49,31 +59,30 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 					quality = 88
 				}
 				quality, maxHeight = adaptParams(quality, maxHeight)
-				frame, err := capture.CaptureMonitorScaled(monitor, quality, maxHeight)
+				img, err := capture.CaptureMonitorImage(monitor, maxHeight)
 				if err != nil {
 					// Ctrl+Alt+Del / UAC / lock screen switch to the secure desktop,
 					// where capture fails. Keep retrying instead of ending the stream.
 					secureDesktopState(peer, true)
+					enc.reset()
 					continue
 				}
 				secureDesktopState(peer, false)
-				if len(frame.JPEG) > screen.MaxPayloadSize {
-					fallbackQuality := 76
-					if quality < 80 {
-						fallbackQuality = quality
-					}
-					frame, err = capture.CaptureMonitorScaled(monitor, fallbackQuality, maxHeight)
-					if err != nil {
-						continue
-					}
+				payload, skip, err := enc.encode(img, monitor, quality)
+				if skip || err != nil {
+					continue
+				}
+				if len(payload) > screen.MaxPayloadSize {
+					enc.reset()
+					continue
 				}
 				seq++
 				err = peer.SendScreenFrame(screen.Frame{
 					Monitor: uint16(monitor),
 					Seq:     seq,
-					Width:   uint32(frame.Width),
-					Height:  uint32(frame.Height),
-					JPEG:    frame.JPEG,
+					Width:   uint32(img.Bounds().Dx()),
+					Height:  uint32(img.Bounds().Dy()),
+					JPEG:    payload,
 				})
 				if err != nil {
 					setStatus("● Ekran DataChannel gönderim hatası: " + err.Error())
@@ -178,7 +187,10 @@ func signalingEndpoint() string {
 		return v
 	}
 	cfg := currentSettings()
-	if v := strings.TrimSpace(cfg.SignalingURL); v != "" {
+	if v := pickSignaling(cfg.SignalingURL); v != "" {
+		return v
+	}
+	if v := builtinSignaling(); v != "" {
 		return v
 	}
 	if embeddedSignalingReady.Load() {

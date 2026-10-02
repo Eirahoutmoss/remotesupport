@@ -5,9 +5,12 @@ package main
 // Build 2: session video recording as MJPEG AVI (16) and input macros (1).
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/eirahoutmoss/remotesupport/client/screen"
 	"github.com/eirahoutmoss/remotesupport/shared/protocol"
 )
 
@@ -110,17 +112,28 @@ func (a *aviWriter) close() error {
 	return a.f.Close()
 }
 
-// recordFrame is called for every frame the operator receives.
-func recordFrame(f screen.Frame) {
-	if !recording.Load() || f.Monitor == reverseMonitorTag {
-		return
+// recordSnapshot encodes what the viewer currently shows. Frames arrive as
+// tile deltas, so the composed viewer image is the only complete picture.
+func recordSnapshot() ([]byte, int, int) {
+	viewer.mu.RLock()
+	w, h := viewer.width, viewer.height
+	var px []byte
+	if viewer.pixels != nil && w > 0 && h > 0 {
+		px = append([]byte(nil), viewer.pixels...)
 	}
-	recMu.Lock()
-	recLatest = f.JPEG
-	if recW == 0 {
-		recW, recH = int(f.Width), int(f.Height)
+	viewer.mu.RUnlock()
+	if px == nil {
+		return nil, 0, 0
 	}
-	recMu.Unlock()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i := 0; i+3 < len(px) && i+3 < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = px[i+2], px[i+1], px[i], 255
+	}
+	var buf bytes.Buffer
+	if jpeg.Encode(&buf, img, &jpeg.Options{Quality: 70}) != nil {
+		return nil, 0, 0
+	}
+	return buf.Bytes(), w, h
 }
 
 func startRecording() {
@@ -133,7 +146,6 @@ func startRecording() {
 	host := regexp.MustCompile(`[^A-Za-z0-9_-]`).ReplaceAllString(getRemoteHost(), "")
 	path := filepath.Join(dir, fmt.Sprintf("NexDesk-%s-%s.avi", host, time.Now().Format("20060102-150405")))
 	recMu.Lock()
-	recLatest, recW, recH = nil, 0, 0
 	recStop = make(chan struct{})
 	stop := recStop
 	recMu.Unlock()
@@ -158,9 +170,7 @@ func startRecording() {
 				return
 			case <-t.C:
 			}
-			recMu.Lock()
-			j, w, h := recLatest, recW, recH
-			recMu.Unlock()
+			j, w, h := recordSnapshot()
 			if j == nil {
 				continue
 			}

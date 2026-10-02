@@ -58,8 +58,8 @@ var (
 // agentOnly messages act on the machine that is being supported; the operator
 // must never obey them (a hostile "agent" could otherwise lock or drive the
 // technician's PC). operatorOnly is the reverse.
-var agentOnly = []string{"INPUT:", "CURTAIN:", "LOCKINPUT:", "ANNOT:", "ANNOT_CLEAR", "SYSINFO_REQ", "CLIP_REQ", "REPAIR:", "RESOLUTION:", "MONITOR:", "ADAPT:", "HANDOVER_REQ", "REVERSE:", "REC:"}
-var operatorOnly = []string{"SYSINFO:", "MONITORS:", "REPAIR_RES:", "HANDOVER_CODE:", "HANDOVER_DONE", "HANDOVER_NO", "FRAUD_HOLD:", "MACS:", "SECURE_DESKTOP:"}
+var agentOnly = []string{"INPUT:", "CURTAIN:", "LOCKINPUT:", "ANNOT:", "ANNOT_CLEAR", "SYSINFO_REQ", "CLIP_REQ", "REPAIR:", "RESOLUTION:", "MONITOR:", "ADAPT:", "HANDOVER_REQ", "REVERSE:", "REC:", "KEYFRAME"}
+var operatorOnly = []string{"SYSINFO:", "MONITORS:", "REPAIR_RES:", "HANDOVER_CODE:", "HANDOVER_DONE", "HANDOVER_NO", "FRAUD_HOLD:", "MACS:", "SECURE_DESKTOP:", "ADAPT_INFO:"}
 
 func hasAnyPrefix(s string, ps []string) bool {
 	for _, p := range ps {
@@ -127,6 +127,15 @@ func handleB2Control(peer *webrtcpeer.Peer, raw string) bool {
 		if state.hwnd != 0 {
 			invalidateRect.Call(state.hwnd, 0, 0)
 		}
+		return true
+	case strings.HasPrefix(raw, "ADAPT_INFO:"):
+		var lv int32
+		if _, err := fmt.Sscanf(strings.TrimPrefix(raw, "ADAPT_INFO:"), "%d", &lv); err == nil && lv >= 0 && lv <= 3 {
+			opAdapt.Store(lv)
+		}
+		return true
+	case raw == "KEYFRAME":
+		requestKeyframe()
 		return true
 	case raw == "HANDOVER_REQ":
 		go agentHandover(peer)

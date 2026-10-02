@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/color"
 	"image/jpeg"
 	"math"
 	"runtime"
@@ -73,6 +72,7 @@ var (
 	procGetCursorInfo          = user32.NewProc("GetCursorInfo")
 	procGetIconInfo            = user32.NewProc("GetIconInfo")
 	procDrawIconEx             = user32.NewProc("DrawIconEx")
+	procSetThreadDpiCtx        = user32.NewProc("SetThreadDpiAwarenessContext")
 )
 
 // DrawCursor paints the mouse pointer into captured frames (on by default) so
@@ -175,48 +175,71 @@ func captureMonitor(index int, quality int) (Frame, error) {
 }
 
 func captureMonitorScaled(index int, quality int, maxHeight int) (Frame, error) {
-	captureMu.Lock()
-	defer captureMu.Unlock()
-	quality = ValidateQuality(quality)
-
-	monitors, err := listMonitors()
+	img, err := captureMonitorImage(index, maxHeight)
 	if err != nil {
 		return Frame{}, err
 	}
-	if index < 0 || index >= len(monitors) {
-		return Frame{}, fmt.Errorf("capture: monitor index %d out of range", index)
+	var out bytes.Buffer
+	if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: ValidateQuality(quality)}); err != nil {
+		return Frame{}, err
 	}
-	m := monitors[index]
+	return Frame{Width: img.Bounds().Dx(), Height: img.Bounds().Dy(), JPEG: out.Bytes()}, nil
+}
+
+// captureMonitorImage grabs one display (cursor drawn, optional grayscale)
+// and downscales it to maxHeight when set.
+func captureMonitorImage(index int, maxHeight int) (*image.RGBA, error) {
+	captureMu.Lock()
+	defer captureMu.Unlock()
+	// NexDesk itself is DPI-unaware, so on a 125/150 % display Windows hands
+	// it scaled (logical) monitor sizes and BitBlt grabbed only the top-left
+	// part of the real screen. Capture in a per-monitor-aware thread context
+	// to work in physical pixels.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+	if procSetThreadDpiCtx.Find() == nil {
+		prev, _, _ := procSetThreadDpiCtx.Call(^uintptr(3)) // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (-4)
+		if prev != 0 {
+			defer procSetThreadDpiCtx.Call(prev)
+		}
+	}
+
+	monitors, err := listMonitors()
+	if err != nil {
+		return nil, err
+	}
+	if index < 0 || index >= len(monitors) {
+		return nil, fmt.Errorf("capture: monitor index %d out of range", index)
+	}
+	m := monitors[index]
 
 	screen, _, err := procGetDC.Call(0)
 	if screen == 0 {
-		return Frame{}, fmt.Errorf("capture: GetDC: %w", err)
+		return nil, fmt.Errorf("capture: GetDC: %w", err)
 	}
 	defer procReleaseDC.Call(0, screen)
 
 	memdc, _, err := procCreateCompatibleDC.Call(screen)
 	if memdc == 0 {
-		return Frame{}, fmt.Errorf("capture: CreateCompatibleDC: %w", err)
+		return nil, fmt.Errorf("capture: CreateCompatibleDC: %w", err)
 	}
 	defer procDeleteDC.Call(memdc)
 
 	bmp, _, err := procCreateCompatibleBitmap.Call(screen, uintptr(m.Width), uintptr(m.Height))
 	if bmp == 0 {
-		return Frame{}, fmt.Errorf("capture: CreateCompatibleBitmap: %w", err)
+		return nil, fmt.Errorf("capture: CreateCompatibleBitmap: %w", err)
 	}
 	defer procDeleteObject.Call(bmp)
 
 	old, _, _ := procSelectObject.Call(memdc, bmp)
 	if old == 0 {
-		return Frame{}, errors.New("capture: SelectObject failed")
+		return nil, errors.New("capture: SelectObject failed")
 	}
 	defer procSelectObject.Call(memdc, old)
 
 	ok, _, err := procBitBlt.Call(memdc, 0, 0, uintptr(m.Width), uintptr(m.Height), screen, uintptr(int32(m.X)), uintptr(int32(m.Y)), srccopy)
 	if ok == 0 {
-		return Frame{}, fmt.Errorf("capture: BitBlt: %w", err)
+		return nil, fmt.Errorf("capture: BitBlt: %w", err)
 	}
 	if DrawCursor.Load() {
 		drawCursor(memdc, m.X, m.Y)
@@ -228,7 +251,7 @@ func captureMonitorScaled(index int, quality int, maxHeight int) (Frame, error) 
 	raw := make([]byte, m.Width*m.Height*4)
 	rows, _, err := procGetDIBits.Call(memdc, bmp, 0, uintptr(m.Height), uintptr(unsafe.Pointer(&raw[0])), uintptr(unsafe.Pointer(&bmi)), dibRGBColors)
 	if rows == 0 {
-		return Frame{}, fmt.Errorf("capture: GetDIBits: %w", err)
+		return nil, fmt.Errorf("capture: GetDIBits: %w", err)
 	}
 
 	img := image.NewRGBA(image.Rect(0, 0, m.Width, m.Height))
@@ -252,12 +275,7 @@ func captureMonitorScaled(index int, quality int, maxHeight int) (Frame, error) 
 	if maxHeight > 0 && img.Bounds().Dy() > maxHeight {
 		img = resizeBilinear(img, maxHeight)
 	}
-
-	var out bytes.Buffer
-	if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: quality}); err != nil {
-		return Frame{}, err
-	}
-	return Frame{Width: img.Bounds().Dx(), Height: img.Bounds().Dy(), JPEG: out.Bytes()}, nil
+	return img, nil
 }
 
 func resizeBilinear(src *image.RGBA, dstH int) *image.RGBA {
@@ -269,6 +287,25 @@ func resizeBilinear(src *image.RGBA, dstH int) *image.RGBA {
 		copy(dst.Pix, src.Pix)
 		return dst
 	}
+	// Precompute horizontal taps once; fixed-point (8-bit) weights and direct
+	// Pix indexing make this several times faster than RGBAAt/SetRGBA.
+	x0s := make([]int, dstW)
+	x1s := make([]int, dstW)
+	fxs := make([]uint32, dstW)
+	for x := 0; x < dstW; x++ {
+		sx := (float64(x)+0.5)*float64(srcW)/float64(dstW) - 0.5
+		x0 := int(math.Floor(sx))
+		fx := sx - float64(x0)
+		if x0 < 0 {
+			x0, fx = 0, 0
+		}
+		x1 := x0 + 1
+		if x1 >= srcW {
+			x1 = srcW - 1
+		}
+		x0s[x], x1s[x], fxs[x] = x0*4, x1*4, uint32(fx*256)
+	}
+	sp, ss := src.Pix, src.Stride
 	for y := 0; y < dstH; y++ {
 		sy := (float64(y)+0.5)*float64(srcH)/float64(dstH) - 0.5
 		y0 := int(math.Floor(sy))
@@ -280,34 +317,21 @@ func resizeBilinear(src *image.RGBA, dstH int) *image.RGBA {
 		if y1 >= srcH {
 			y1 = srcH - 1
 		}
+		wy := uint32(fy * 256)
+		r0, r1 := sp[y0*ss:], sp[y1*ss:]
+		d := dst.Pix[y*dst.Stride:]
 		for x := 0; x < dstW; x++ {
-			sx := (float64(x)+0.5)*float64(srcW)/float64(dstW) - 0.5
-			x0 := int(math.Floor(sx))
-			fx := sx - float64(x0)
-			if x0 < 0 {
-				x0, fx = 0, 0
+			a, b, wx := x0s[x], x1s[x], fxs[x]
+			for c := 0; c < 3; c++ {
+				top := uint32(r0[a+c])*(256-wx) + uint32(r0[b+c])*wx
+				bot := uint32(r1[a+c])*(256-wx) + uint32(r1[b+c])*wx
+				d[x*4+c] = uint8((top*(256-wy) + bot*wy + 32768) >> 16)
 			}
-			x1 := x0 + 1
-			if x1 >= srcW {
-				x1 = srcW - 1
-			}
-			c00 := src.RGBAAt(x0, y0)
-			c10 := src.RGBAAt(x1, y0)
-			c01 := src.RGBAAt(x0, y1)
-			c11 := src.RGBAAt(x1, y1)
-			lerp := func(a, b uint8, t float64) uint8 { return uint8(math.Round(float64(a)*(1-t) + float64(b)*t)) }
-			r0 := lerp(c00.R, c10.R, fx)
-			g0 := lerp(c00.G, c10.G, fx)
-			b0 := lerp(c00.B, c10.B, fx)
-			r1 := lerp(c01.R, c11.R, fx)
-			g1 := lerp(c01.G, c11.G, fx)
-			b1 := lerp(c01.B, c11.B, fx)
-			dst.SetRGBA(x, y, color.RGBA{R: lerp(r0, r1, fy), G: lerp(g0, g1, fy), B: lerp(b0, b1, fy), A: 255})
+			d[x*4+3] = 255
 		}
 	}
 	return dst
 }
-
 func maxIntCapture(a, b int) int {
 	if a > b {
 		return a

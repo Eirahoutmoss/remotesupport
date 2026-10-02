@@ -448,3 +448,43 @@ func onInetCommand(id int) bool {
 	}
 	return true
 }
+
+// splitURLs accepts several addresses separated by commas, semicolons or
+// spaces, e.g. the public and the in-house address of the same server.
+func splitURLs(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ';' || r == ' ' || r == '\t' })
+}
+
+// pickSignaling returns the first configured signaling URL that accepts a TCP
+// connection, so technicians inside the company network (where the public
+// address may not loop back) fall through to the in-house address.
+func pickSignaling(s string) string {
+	list := splitURLs(s)
+	if len(list) <= 1 {
+		return strings.Join(list, "")
+	}
+	if v := reachableSignaling(s); v != "" {
+		return v
+	}
+	return list[0]
+}
+
+// reachableSignaling returns the first URL in s accepting TCP, or "".
+func reachableSignaling(s string) string {
+	list := splitURLs(s)
+	for _, u := range list {
+		p, err := url.Parse(u)
+		if err != nil || p.Host == "" {
+			continue
+		}
+		host := p.Host
+		if p.Port() == "" {
+			host = net.JoinHostPort(p.Hostname(), map[string]string{"wss": "443", "https": "443"}[p.Scheme]+map[bool]string{true: "80"}[p.Scheme == "ws" || p.Scheme == "http"])
+		}
+		if c, err := net.DialTimeout("tcp", host, 1500*time.Millisecond); err == nil {
+			c.Close()
+			return u
+		}
+	}
+	return ""
+}

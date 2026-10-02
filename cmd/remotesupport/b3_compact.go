@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	webrtcpeer "github.com/eirahoutmoss/remotesupport/client/webrtc"
 	"github.com/pion/webrtc/v4"
@@ -48,9 +49,14 @@ func iceCreds(seed []byte) (string, string) {
 }
 
 func newManualPeerSeed(seed []byte) (*webrtcpeer.Peer, error) {
-	var se webrtc.SettingEngine
+	se := peerSettings()
 	u, p := iceCreds(seed)
 	se.SetICECredentials(u, p)
+	// The codes travel by hand (WhatsApp etc.), so the side that answers may
+	// wait minutes for the other to paste. Pion's defaults give up after 30 s
+	// in 'checking' and stop pinging a pair after 7 requests; keep trying.
+	se.SetICETimeouts(8*time.Second, 10*time.Minute, 2*time.Second)
+	se.SetICEMaxBindingRequests(3000)
 	return webrtcpeer.NewWithSettings(true, webrtc.Configuration{ICEServers: iceServers()}, se, nil)
 }
 

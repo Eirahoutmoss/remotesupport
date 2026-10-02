@@ -47,6 +47,25 @@ func (q *LatestQueue) Get() ([]byte, error) {
 	}
 }
 
+// Empty reports whether no frame is waiting to be sent.
+func (q *LatestQueue) Empty() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.frame) == 0
+}
+
+// TryGet returns the pending frame without blocking.
+func (q *LatestQueue) TryGet() ([]byte, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.frame) == 0 {
+		return nil, false
+	}
+	out := append([]byte(nil), q.frame...)
+	q.frame = nil
+	return out, true
+}
+
 func (q *LatestQueue) Close() {
 	q.mu.Lock()
 	if !q.closed {

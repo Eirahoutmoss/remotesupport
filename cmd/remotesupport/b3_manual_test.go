@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func TestManualHandshakeConnects(t *testing.T) {
 	if err := op.CreateControl(); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	offer, err := op.Offer(ctx)
 	if err != nil {
@@ -67,6 +68,9 @@ func TestManualHandshakeConnects(t *testing.T) {
 	answerIn, ok := compactUnpack(true, answerCode)
 	if !ok {
 		t.Fatal("answer code not decoded")
+	}
+	if os.Getenv("NEXDESK_SLOWTEST") != "" {
+		time.Sleep(40 * time.Second) // reply pasted by hand much later
 	}
 	if err := op.AddSignal(webrtcpeer.Signal{Kind: "answer", Payload: answerIn}); err != nil {
 		t.Fatal(err)

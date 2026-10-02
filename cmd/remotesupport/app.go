@@ -138,6 +138,13 @@ func main() {
 		if int32(r) <= 0 {
 			break
 		}
+		// Esc / F11 leave full screen wherever the keyboard focus is. Before,
+		// only the viewer handled them, and after switching to full screen the
+		// focus sat elsewhere, so IsDialogMessage swallowed Esc as IDCANCEL.
+		if m.Message == 0x0100 && (m.WParam == 0x1B || m.WParam == 0x7A) && fullscreen.Load() {
+			toggleFullscreen()
+			continue
+		}
 		if d, _, _ := isDialogMessage.Call(state.hwnd, uintptr(unsafe.Pointer(&m))); d != 0 {
 			continue
 		}

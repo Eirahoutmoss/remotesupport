@@ -130,11 +130,10 @@ func onB1Connected(peer *webrtcpeer.Peer) {
 	if state.mode == 1 {
 		host, _ := os.Hostname()
 		if macs := localMACs(); len(macs) > 0 {
-			_ = peer.SendControlText("MACS:" + host + "|" + strings.Join(macs, ","))
+			go sendCtlRetry(peer, "MACS:"+host+"|"+strings.Join(macs, ","))
 		}
 		return
 	}
-	go adaptiveWatch(peer)
 }
 
 // ---- 7: secure clipboard ----
@@ -354,7 +353,11 @@ func adaptParams(quality, maxHeight int) (int, int) {
 		}
 		return h
 	}
-	switch adaptLevel.Load() {
+	lv := adaptLevel.Load()
+	if relayPath.Load() && lv < 1 {
+		lv = 1 // relayed via TURN: start at 720p / lower quality
+	}
+	switch lv {
 	case 1:
 		return min(quality, 70), capH(maxHeight, 720)
 	case 2:
@@ -568,4 +571,70 @@ func localMACs() []string {
 		out = append(out, i.HardwareAddr.String())
 	}
 	return out
+}
+
+// relayPath is true while the session runs through a TURN relay.
+var relayPath atomic.Bool
+
+// sendCtlRetry sends msg once the control data channel is open. Over a TURN
+// relay the channel opens noticeably after the peer reports "connected", and
+// messages sent before that (HELLO, monitor list) were silently lost — which
+// left the operator without monitor/resolution buttons.
+func sendCtlRetry(peer *webrtcpeer.Peer, msg string) {
+	for i := 0; i < 100; i++ {
+		if peer.SendControlText(msg) == nil {
+			return
+		}
+		if peerDead(peer) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// congestion drives adaptive quality on the agent. The old operator-side
+// rule read "few frames per second" as a slow link, but with tile deltas an
+// unchanged screen legitimately sends nothing — so it degraded quality on
+// idle screens. Here we measure what actually matters: how often the capture
+// tick finds the screen channel still busy with the previous frame.
+type congestion struct {
+	ticks, busy int
+	calm        int
+	since       time.Time
+}
+
+func (c *congestion) tick(peer *webrtcpeer.Peer, busy bool) {
+	if c.since.IsZero() {
+		c.since = time.Now()
+	}
+	c.ticks++
+	if busy {
+		c.busy++
+	}
+	if time.Since(c.since) < 2*time.Second {
+		return
+	}
+	ratio := float64(c.busy) / float64(max(1, c.ticks))
+	c.ticks, c.busy, c.since = 0, 0, time.Now()
+	lv := adaptLevel.Load()
+	switch {
+	case ratio > 0.6 && lv < 2: // max level 2: keep colour; grey helped little
+		lv++
+		c.calm = 0
+	case ratio < 0.15:
+		c.calm++
+		if c.calm >= 4 && lv > 0 { // ~8 s of headroom before stepping back up
+			lv--
+			c.calm = 0
+		} else {
+			return
+		}
+	default:
+		c.calm = 0
+		return
+	}
+	adaptLevel.Store(lv)
+	capture.Grayscale.Store(false)
+	netlogf("Uyarlamalı kalite seviyesi %d (meşgul oranı %.0f%%)", lv, ratio*100)
+	go sendCtlRetry(peer, fmt.Sprintf("ADAPT_INFO:%d", lv))
 }

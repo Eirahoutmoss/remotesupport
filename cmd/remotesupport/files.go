@@ -157,5 +157,5 @@ func sendRemoteMonitorList(peer *webrtcpeer.Peer) {
 	if err != nil {
 		return
 	}
-	_ = peer.SendControlText("MONITORS:" + string(b))
+	go sendCtlRetry(peer, "MONITORS:"+string(b))
 }
