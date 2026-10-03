@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="NexDesk.RemoteSupport" version="1.2.0.0" processorArchitecture="amd64"/>
+  <!--
+    DPI: the UI is hand-drawn GDI at a fixed 96-DPI coordinate space. Declaring
+    the process DPI-aware without rescaling every coordinate would make it tiny
+    on 125/150% displays. Instead we stay DPI-unaware for window metrics (Windows
+    virtualizes the window size) but turn on GDI Scaling, so Windows re-renders
+    the GDI text and primitives at the monitor's DPI — crisp output, no layout
+    changes. Supported on Windows 10 1703+ (older builds simply ignore it).
+  -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">false</dpiAware>
+      <gdiScaling xmlns="http://schemas.microsoft.com/SMI/2017/WindowsSettings">true</gdiScaling>
+    </windowsSettings>
+  </application>
+</assembly>
